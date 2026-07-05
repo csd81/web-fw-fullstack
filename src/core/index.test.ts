@@ -8,6 +8,40 @@ beforeAll(() => {
 });
 
 describe("Phase 10: Specialized Hooks", () => {
+  test("runs useEffect cleanup on unmount", async () => {
+    let cleanedUp = false;
+    const Child = () => {
+      useEffect(() => {
+        return () => { cleanedUp = true; };
+      }, []);
+      return createElement("div", null, "child");
+    };
+
+    const App = () => {
+      const [show, setShow] = useState(true);
+      return createElement(
+        "div",
+        { id: "parent", onClick: () => setShow(false) },
+        show ? createElement(Child, null) : null
+      );
+    };
+
+    const container = document.createElement("div");
+    render(createElement(App, null), container);
+    
+    // Initial render
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(cleanedUp).toBe(false);
+    expect(container.innerHTML).toBe('<div id="parent"><div>child</div></div>');
+
+    // Trigger unmount
+    (container.firstChild as HTMLElement).click();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(container.innerHTML).toBe('<div id="parent"></div>');
+    expect(cleanedUp).toBe(true);
+  });
+
   test("runs useLayoutEffect synchronously and useEffect asynchronously", async () => {
     const container = document.createElement("div");
 

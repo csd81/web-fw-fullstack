@@ -30,7 +30,9 @@ function createTextElement(text: string): VNode {
 }
 
 export function createElement(type: any, props: any, ...children: any[]): VNode {
-  const flatChildren = children.flat(Infinity);
+  const flatChildren = children
+    .flat(Infinity)
+    .filter(child => child != null && typeof child !== "boolean");
   
   const mergedChildren: VNode[] = [];
   for (let i = 0; i < flatChildren.length; i++) {

@@ -170,20 +170,40 @@ function commitRoot() {
 }
 
 function commitDeletion(fiber: Fiber, domParent: Element | Text) {
-  if (fiber.dom) {
-    domParent.removeChild(fiber.dom);
-  } else {
-    let targetParent = domParent;
-    if (fiber.type === "PORTAL") {
-      targetParent = fiber.props.container;
+  function runUnmountCleanups(f: Fiber) {
+    if (f.hooks) {
+      f.hooks.forEach((h) => {
+        if ((h.tag === "effect" || h.tag === "layoutEffect") && h.cleanup) {
+          h.cleanup();
+        }
+      });
     }
-    
-    let child = fiber.child;
+    let child = f.child;
     while (child) {
-      commitDeletion(child, targetParent);
+      runUnmountCleanups(child);
       child = child.sibling;
     }
   }
+
+  runUnmountCleanups(fiber);
+
+  function removeDom(f: Fiber, parent: Element | Text) {
+    if (f.dom) {
+      parent.removeChild(f.dom);
+    } else {
+      let targetParent = parent;
+      if (f.type === "PORTAL") {
+        targetParent = f.props.container;
+      }
+      let child = f.child;
+      while (child) {
+        removeDom(child, targetParent);
+        child = child.sibling;
+      }
+    }
+  }
+
+  removeDom(fiber, domParent);
 }
 
 function commitWork(fiber: Fiber | null) {
