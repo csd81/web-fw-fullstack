@@ -8,6 +8,9 @@ let deletions: Fiber[] = [];
 let wipFiber: Fiber | null = null;
 let hookIndex: number = 0;
 
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+const HTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
+
 const isEvent = (key: string) => key.startsWith("on");
 const isProperty = (key: string) => key !== "children" && !isEvent(key);
 const isNew = (prev: any, next: any) => (key: string) => prev[key] !== next[key];
@@ -33,33 +36,65 @@ export function memo(Component: Function, areEqual?: (prev: any, next: any) => b
   };
 }
 
-function createDom(fiber: Fiber): HTMLElement | Text {
-  const dom =
-    fiber.type === "TEXT_ELEMENT"
-      ? document.createTextNode("")
-      : document.createElement(fiber.type as string);
+function createDom(fiber: Fiber): Element | Text {
+  if (fiber.type === "TEXT_ELEMENT") {
+    const dom = document.createTextNode("");
+    updateDom(dom, {}, fiber.props, fiber);
+    return dom;
+  }
+
+  // Phase 9: SVG Namespace Support
+  const dom = fiber.namespaceURI === SVG_NAMESPACE
+    ? document.createElementNS(SVG_NAMESPACE, fiber.type as string)
+    : document.createElement(fiber.type as string);
 
   updateDom(dom, {}, fiber.props, fiber);
   return dom;
 }
 
-function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any, fiber: Fiber) {
-  if (dom instanceof HTMLElement || dom instanceof Text) {
+function updateDom(dom: Element | Text, prevProps: any, nextProps: any, fiber: Fiber) {
+  if (dom instanceof Element || dom instanceof Text) {
     (dom as any).__fiber = fiber;
+  }
+
+  if (dom instanceof Text) {
+    if (prevProps.nodeValue !== nextProps.nodeValue) {
+      dom.nodeValue = nextProps.nodeValue || "";
+    }
+    return;
   }
 
   Object.keys(prevProps)
     .filter(isProperty)
     .filter(isGone(prevProps, nextProps))
     .forEach((name) => {
-      (dom as any)[name] = "";
+      if (fiber.namespaceURI === SVG_NAMESPACE) {
+        dom.removeAttribute(name === "className" ? "class" : name);
+      } else {
+        (dom as any)[name] = "";
+      }
     });
 
   Object.keys(nextProps)
     .filter(isProperty)
     .filter(isNew(prevProps, nextProps))
     .forEach((name) => {
-      (dom as any)[name] = nextProps[name];
+      // Phase 9: Handle SVG attributes properly
+      if (fiber.namespaceURI === SVG_NAMESPACE) {
+        if (name === "className") {
+          dom.setAttribute("class", nextProps[name]);
+        } else if (name.startsWith("xlink:")) {
+          dom.setAttributeNS("http://www.w3.org/1999/xlink", name.replace("xlink:", ""), nextProps[name]);
+        } else {
+          dom.setAttribute(name, nextProps[name]);
+        }
+      } else {
+        if (name === "style" && typeof nextProps[name] === "object") {
+          Object.assign((dom as HTMLElement).style, nextProps[name]);
+        } else {
+          (dom as any)[name] = nextProps[name];
+        }
+      }
     });
 }
 
@@ -120,14 +155,11 @@ function commitRoot() {
   wipRoot = null;
 }
 
-function commitDeletion(fiber: Fiber, domParent: HTMLElement | Text) {
+function commitDeletion(fiber: Fiber, domParent: Element | Text) {
   if (fiber.dom) {
     domParent.removeChild(fiber.dom);
   } else {
-    // If the fiber doesn't have a DOM node (e.g. Fragment, Function Component, Portal),
-    // we must delete all of its virtual children individually from the parent.
     let targetParent = domParent;
-    // If we're deleting a portal, we remove its children from the portal container instead.
     if (fiber.type === "PORTAL") {
       targetParent = fiber.props.container;
     }
@@ -145,17 +177,16 @@ function commitWork(fiber: Fiber | null) {
     return;
   }
 
-  // Phase 8: Traversal logic to support Portals
   let domParentFiber = fiber.parent;
   while (domParentFiber && !domParentFiber.dom && domParentFiber.type !== "PORTAL") {
     domParentFiber = domParentFiber.parent;
   }
   
-  let domParent: HTMLElement | null = null;
+  let domParent: Element | null = null;
   if (domParentFiber && domParentFiber.type === "PORTAL") {
     domParent = domParentFiber.props.container;
   } else if (domParentFiber) {
-    domParent = domParentFiber.dom as HTMLElement;
+    domParent = domParentFiber.dom as Element;
   }
 
   if (domParent) {
@@ -185,7 +216,7 @@ function commitWork(fiber: Fiber | null) {
 
 const DELEGATED_EVENTS = ["click", "input", "change", "keydown", "keyup", "submit"];
 
-function setupEventDelegation(container: HTMLElement | Text) {
+function setupEventDelegation(container: Element | Text) {
   if ((container as any).__eventsBound) return;
   
   const delegate = (e: Event) => {
@@ -208,7 +239,7 @@ function setupEventDelegation(container: HTMLElement | Text) {
   (container as any).__eventsBound = true;
 }
 
-export function render(element: VNode, container: HTMLElement | Text) {
+export function render(element: VNode, container: Element | Text) {
   setupEventDelegation(container);
 
   wipRoot = {
@@ -222,6 +253,7 @@ export function render(element: VNode, container: HTMLElement | Text) {
     alternate: currentRoot,
     effectTag: "PLACEMENT",
     type: "ROOT",
+    namespaceURI: HTML_NAMESPACE
   };
   deletions = [];
   nextUnitOfWork = wipRoot;
@@ -273,8 +305,6 @@ function performUnitOfWork(fiber: Fiber): Fiber | null {
     updateHostComponent(fiber);
   }
 
-  // Phase 8: If the work loop was hijacked synchronously (e.g. by an Error Boundary),
-  // we must immediately yield the new unit of work.
   if (nextUnitOfWork !== fiber) {
     return nextUnitOfWork;
   }
@@ -314,6 +344,7 @@ function cloneChildren(fiber: Fiber) {
       alternate: oldChild,
       effectTag: "NONE",
       hooks: oldChild.hooks,
+      namespaceURI: oldChild.namespaceURI
     };
     if (!prevSibling) {
       fiber.child = newChild;
@@ -387,6 +418,7 @@ function updateFunctionComponent(fiber: Fiber) {
             sibling: null,
             effectTag: "UPDATE",
             type: "ROOT",
+            namespaceURI: HTML_NAMESPACE
           };
           nextUnitOfWork = wipRoot;
           deletions = [];
@@ -395,7 +427,6 @@ function updateFunctionComponent(fiber: Fiber) {
         throw err;
       }
     } else {
-      // Phase 8: Error Boundary Catch Logic
       let errorFiber = fiber.parent;
       while (errorFiber && errorFiber.type !== "ERROR_BOUNDARY") {
         errorFiber = errorFiber.parent;
@@ -414,12 +445,13 @@ function updateFunctionComponent(fiber: Fiber) {
           effectTag: "UPDATE",
           type: errorFiber.type,
           hooks: errorFiber.hooks,
-          error: err
+          error: err,
+          namespaceURI: errorFiber.namespaceURI
         };
         nextUnitOfWork = wipRoot;
         deletions = [];
       } else {
-        throw err; // Unhandled error
+        throw err;
       }
     }
   }
@@ -450,6 +482,11 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
 
   let prevSibling: Fiber | null = null;
 
+  let currentNamespaceURI = wipFiber.namespaceURI;
+  if (wipFiber.type === "foreignObject") {
+    currentNamespaceURI = HTML_NAMESPACE;
+  }
+
   for (let i = 0; i < elements.length; i++) {
     const element = elements[i];
     if (!element) continue;
@@ -457,6 +494,12 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
     const key = element.props.key != null ? element.props.key : i;
     const oldFiber = oldFiberMap.get(key);
     let newFiber: Fiber | null = null;
+
+    // Phase 9: Propagate Namespace URI
+    let namespaceURI = currentNamespaceURI;
+    if (element.type === "svg") {
+      namespaceURI = SVG_NAMESPACE;
+    }
 
     const sameType = oldFiber && element.type === oldFiber.type;
 
@@ -470,7 +513,8 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
         sibling: null,
         alternate: oldFiber,
         effectTag: "UPDATE",
-        error: oldFiber!.error, // preserve error state
+        error: oldFiber!.error,
+        namespaceURI
       };
       oldFiberMap.delete(key);
     } else {
@@ -483,6 +527,7 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
         sibling: null,
         alternate: null,
         effectTag: "PLACEMENT",
+        namespaceURI
       };
     }
 
@@ -533,7 +578,8 @@ export function useReducer<S, A>(reducer: (state: S, action: A) => S, initialSta
       effectTag: "UPDATE",
       type: currentFiber.type,
       hooks: currentFiber.hooks,
-      error: currentFiber.error
+      error: currentFiber.error,
+      namespaceURI: currentFiber.namespaceURI
     };
     nextUnitOfWork = wipRoot;
     deletions = [];

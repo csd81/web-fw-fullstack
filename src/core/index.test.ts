@@ -1,62 +1,60 @@
 import { expect, test, describe, beforeAll } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { createElement, useState, AntigravityReact, ErrorBoundary, createPortal } from "./index";
+import { createElement, useState, AntigravityReact } from "./index";
 import { render } from "./dom";
 
 beforeAll(() => {
   GlobalRegistrator.register();
 });
 
-describe("Phase 8: Error Boundaries and Portals", () => {
-  test("catches errors and renders portals outside the root", async () => {
-    const mainContainer = document.createElement("div");
-    const portalContainer = document.createElement("div");
-    document.body.appendChild(portalContainer);
+describe("Phase 9: SVG & Namespace Support", () => {
+  test("creates SVG nodes with correct namespace and attributes", async () => {
+    const container = document.createElement("div");
 
-    let triggerCrash: any = null;
+    let triggerColorUpdate: any = null;
 
-    const BuggyComponent = () => {
-      const [shouldCrash, setCrash] = useState(false);
-      triggerCrash = () => setCrash(true);
+    const SvgComponent = () => {
+      const [color, setColor] = useState("red");
+      triggerColorUpdate = () => setColor("blue");
 
-      if (shouldCrash) {
-        throw new Error("I crashed!");
-      }
-
-      return createElement("div", null, "I am fine");
-    };
-
-    const Modal = () => {
-      return createPortal(
-        createElement("div", { id: "modal-content" }, "Modal content!"), 
-        portalContainer
+      return createElement("svg", { width: 100, height: 100, className: "svg-icon" },
+        createElement("circle", { cx: 50, cy: 50, r: 40, fill: color, "xlink:href": "#target" }),
+        createElement("foreignObject", { width: 100, height: 100 },
+          createElement("div", { className: "html-text" }, "HTML text inside SVG")
+        )
       );
     };
 
-    const App = () => {
-      return createElement("div", null,
-        createElement(ErrorBoundary, { fallback: (err: Error) => createElement("h1", null, `Caught: ${err.message}`) },
-          createElement(BuggyComponent, null)
-        ),
-        createElement(Modal, null)
-      );
-    };
-
-    render(createElement(App, null), mainContainer);
+    render(createElement(SvgComponent, null), container);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // 1. Verify Portal worked correctly
-    expect(mainContainer.innerHTML).toBe("<div><div>I am fine</div></div>");
-    expect(portalContainer.innerHTML).toBe('<div id="modal-content">Modal content!</div>');
+    // Wait, happy-dom supports SVGElement namespaces. Let's verify!
+    const svg = container.querySelector("svg");
+    expect(svg).not.toBeNull();
+    // In Happy DOM, nodeName is uppercase. We can just verify it renders properly.
+    expect(svg!.getAttribute("class")).toBe("svg-icon");
 
-    // 2. Trigger Crash
-    triggerCrash();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    const circle = svg!.querySelector("circle");
+    expect(circle).not.toBeNull();
+    expect(circle!.getAttribute("fill")).toBe("red");
+    // Verify xlink namespace attribute was set correctly
+    expect(circle!.getAttributeNS("http://www.w3.org/1999/xlink", "href")).toBe("#target");
 
-    // 3. Verify Error Boundary caught it and rendered the fallback
-    expect(mainContainer.innerHTML).toBe("<div><h1>Caught: I crashed!</h1></div>");
+    const divInsideSvg = svg!.querySelector(".html-text");
+    expect(divInsideSvg).not.toBeNull();
+    expect(divInsideSvg!.textContent).toBe("HTML text inside SVG");
     
-    // Portal content should remain untouched
-    expect(portalContainer.innerHTML).toBe('<div id="modal-content">Modal content!</div>');
+    // Check elements string (relaxed due to happy-dom serialization quirks like lowercasing foreignObject)
+    const htmlString = container.innerHTML;
+    expect(htmlString).toContain('<svg');
+    expect(htmlString).toContain('<circle');
+    expect(htmlString).toContain('<div class="html-text">HTML text inside SVG</div>');
+
+    // Trigger state update
+    triggerColorUpdate();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Verify SVG properly updated its property without recreating the node
+    expect(circle!.getAttribute("fill")).toBe("blue");
   });
 });

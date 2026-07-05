@@ -27,7 +27,7 @@ export interface Hook {
 export interface Fiber {
   type: string | Function | { isMemo: boolean; Component: Function; areEqual?: Function };
   props: VNodeProps;
-  dom: HTMLElement | Text | null;
+  dom: Element | Text | null;
   
   parent: Fiber | null;
   child: Fiber | null;
@@ -38,4 +38,5 @@ export interface Fiber {
   hooks?: Hook[];
   bailsOut?: boolean;
   error?: any;
+  namespaceURI?: string;
 }
