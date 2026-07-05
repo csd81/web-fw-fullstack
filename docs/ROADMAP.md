@@ -128,3 +128,17 @@ This roadmap synthesizes the core concepts from the various "Build Your Own Reac
 **Goal:** Generate HTML strings on the server and attach Fiber nodes to pre-existing DOM elements on the client without rebuilding them.
 \n### Phase 12: True DOM Hydration\nReplace the soft fallback with an algorithm that perfectly reconciles the Virtual DOM against existing server-rendered HTML nodes, avoiding destructive client takeovers.
 \n### Phase 13: Advanced Component Capabilities\nImplement forwardRef, useImperativeHandle, and normalize the Synthetic Event system to support professional, reusable component libraries.
+
+## Meta-Framework Evolution (fullstack.js)
+
+### Phase 14: Build System (Dual-Bundle Compilation)
+Establish a build pipeline (using Bun.build) to compile code separately for the Server (Node/Bun) and the Client (Browser), enabling SSR and hydration.
+
+### Phase 15: File-System Routing
+Create a module that recursively scans a `src/pages/` directory to automatically map files to URL routes, mimicking Next.js architecture.
+
+### Phase 16: The Dev Server & SSR Pipeline
+Build the core `fullstack.js` server runtime to intercept HTTP requests, server-side render the React application, and inject the compiled client bundle for hydration.
+
+### Phase 17: Server-Side Data Fetching
+Implement a `getServerSideProps` mechanism to securely fetch data on the server, pass it to components during SSR, and serialize it to the client for perfect hydration syncing.
