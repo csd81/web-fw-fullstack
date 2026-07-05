@@ -4,7 +4,9 @@
   "type": "module",
   "private": true,
   "devDependencies": {
-    "@types/bun": "latest"
+    "@happy-dom/global-registrator": "^20.10.6",
+    "@types/bun": "latest",
+    "happy-dom": "^20.10.6"
   },
   "peerDependencies": {
     "typescript": "^5"
