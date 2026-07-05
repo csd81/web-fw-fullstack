@@ -1,5 +1,7 @@
 export type AntigravityTextElement = "TEXT_ELEMENT";
 export type AntigravityFragment = "FRAGMENT";
+export type AntigravityPortal = "PORTAL";
+export type AntigravityErrorBoundary = "ERROR_BOUNDARY";
 
 export interface VNode {
   type: string | Function | { isMemo: boolean; Component: Function; areEqual?: Function };
@@ -35,4 +37,5 @@ export interface Fiber {
   effectTag: "PLACEMENT" | "UPDATE" | "DELETION" | "NONE";
   hooks?: Hook[];
   bailsOut?: boolean;
+  error?: any;
 }

@@ -103,7 +103,6 @@ function commitRoot() {
   if (wipRoot && wipRoot.type === "ROOT") {
     currentRoot = wipRoot;
   } else if (wipRoot) {
-    // Subtree render: connect the new subtree to the main tree
     if (wipRoot.parent) {
       if (wipRoot.parent.child === wipRoot.alternate) {
         wipRoot.parent.child = wipRoot;
@@ -124,8 +123,20 @@ function commitRoot() {
 function commitDeletion(fiber: Fiber, domParent: HTMLElement | Text) {
   if (fiber.dom) {
     domParent.removeChild(fiber.dom);
-  } else if (fiber.child) {
-    commitDeletion(fiber.child, domParent);
+  } else {
+    // If the fiber doesn't have a DOM node (e.g. Fragment, Function Component, Portal),
+    // we must delete all of its virtual children individually from the parent.
+    let targetParent = domParent;
+    // If we're deleting a portal, we remove its children from the portal container instead.
+    if (fiber.type === "PORTAL") {
+      targetParent = fiber.props.container;
+    }
+    
+    let child = fiber.child;
+    while (child) {
+      commitDeletion(child, targetParent);
+      child = child.sibling;
+    }
   }
 }
 
@@ -134,11 +145,18 @@ function commitWork(fiber: Fiber | null) {
     return;
   }
 
+  // Phase 8: Traversal logic to support Portals
   let domParentFiber = fiber.parent;
-  while (domParentFiber && !domParentFiber.dom) {
+  while (domParentFiber && !domParentFiber.dom && domParentFiber.type !== "PORTAL") {
     domParentFiber = domParentFiber.parent;
   }
-  const domParent = domParentFiber ? domParentFiber.dom as HTMLElement : null;
+  
+  let domParent: HTMLElement | null = null;
+  if (domParentFiber && domParentFiber.type === "PORTAL") {
+    domParent = domParentFiber.props.container;
+  } else if (domParentFiber) {
+    domParent = domParentFiber.dom as HTMLElement;
+  }
 
   if (domParent) {
     if (fiber.effectTag === "PLACEMENT" && fiber.dom != null) {
@@ -160,7 +178,6 @@ function commitWork(fiber: Fiber | null) {
     commitWork(fiber.child);
   }
   
-  // Only commit sibling if this is not the root of the update
   if (fiber !== wipRoot) {
     commitWork(fiber.sibling);
   }
@@ -243,13 +260,23 @@ if (typeof requestIdleCallback !== "undefined") {
 function performUnitOfWork(fiber: Fiber): Fiber | null {
   const isFunctionComponent = fiber.type instanceof Function || (typeof fiber.type === "object" && (fiber.type as any).isMemo);
   const isFragment = fiber.type === "FRAGMENT";
+  const isPortal = fiber.type === "PORTAL";
+  const isErrorBoundary = fiber.type === "ERROR_BOUNDARY";
 
   if (isFunctionComponent) {
     updateFunctionComponent(fiber);
-  } else if (isFragment) {
-    updateFragmentComponent(fiber);
+  } else if (isFragment || isPortal) {
+    updateFragmentOrPortalComponent(fiber);
+  } else if (isErrorBoundary) {
+    updateErrorBoundaryComponent(fiber);
   } else {
     updateHostComponent(fiber);
+  }
+
+  // Phase 8: If the work loop was hijacked synchronously (e.g. by an Error Boundary),
+  // we must immediately yield the new unit of work.
+  if (nextUnitOfWork !== fiber) {
+    return nextUnitOfWork;
   }
 
   if (fiber.child && !fiber.bailsOut) {
@@ -298,6 +325,17 @@ function cloneChildren(fiber: Fiber) {
   }
 }
 
+function updateErrorBoundaryComponent(fiber: Fiber) {
+  if (fiber.error) {
+    const fallback = typeof fiber.props.fallback === "function" 
+      ? fiber.props.fallback(fiber.error) 
+      : fiber.props.fallback;
+    reconcileChildren(fiber, [fallback]);
+  } else {
+    reconcileChildren(fiber, fiber.props.children);
+  }
+}
+
 function updateFunctionComponent(fiber: Fiber) {
   wipFiber = fiber;
   hookIndex = 0;
@@ -330,8 +368,8 @@ function updateFunctionComponent(fiber: Fiber) {
           : { type: "TEXT_ELEMENT", props: { nodeValue: String(child), children: [] } }
       );
     reconcileChildren(fiber, children as VNode[]);
-  } catch (promise) {
-    if (promise instanceof Promise) {
+  } catch (err) {
+    if (err instanceof Promise) {
       let suspenseFiber = fiber.parent;
       while (suspenseFiber && suspenseFiber.type !== Suspense) {
         suspenseFiber = suspenseFiber.parent;
@@ -339,7 +377,7 @@ function updateFunctionComponent(fiber: Fiber) {
 
       if (suspenseFiber) {
         reconcileChildren(fiber, [suspenseFiber.props.fallback]);
-        promise.then(() => {
+        err.then(() => {
           wipRoot = {
             dom: currentRoot!.dom,
             props: currentRoot!.props,
@@ -354,15 +392,40 @@ function updateFunctionComponent(fiber: Fiber) {
           deletions = [];
         });
       } else {
-        throw promise;
+        throw err;
       }
     } else {
-      throw promise;
+      // Phase 8: Error Boundary Catch Logic
+      let errorFiber = fiber.parent;
+      while (errorFiber && errorFiber.type !== "ERROR_BOUNDARY") {
+        errorFiber = errorFiber.parent;
+      }
+
+      if (errorFiber) {
+        errorFiber.error = err;
+        
+        wipRoot = {
+          dom: errorFiber.dom,
+          props: errorFiber.props,
+          alternate: errorFiber,
+          parent: errorFiber.parent,
+          child: null,
+          sibling: errorFiber.sibling,
+          effectTag: "UPDATE",
+          type: errorFiber.type,
+          hooks: errorFiber.hooks,
+          error: err
+        };
+        nextUnitOfWork = wipRoot;
+        deletions = [];
+      } else {
+        throw err; // Unhandled error
+      }
     }
   }
 }
 
-function updateFragmentComponent(fiber: Fiber) {
+function updateFragmentOrPortalComponent(fiber: Fiber) {
   reconcileChildren(fiber, fiber.props.children);
 }
 
@@ -407,6 +470,7 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
         sibling: null,
         alternate: oldFiber,
         effectTag: "UPDATE",
+        error: oldFiber!.error, // preserve error state
       };
       oldFiberMap.delete(key);
     } else {
@@ -459,7 +523,6 @@ export function useReducer<S, A>(reducer: (state: S, action: A) => S, initialSta
   const dispatch = (action: A) => {
     hook.queue!.push(action);
     
-    // Phase 7: Subtree Rendering!
     wipRoot = {
       dom: currentFiber.dom,
       props: currentFiber.props,
@@ -470,6 +533,7 @@ export function useReducer<S, A>(reducer: (state: S, action: A) => S, initialSta
       effectTag: "UPDATE",
       type: currentFiber.type,
       hooks: currentFiber.hooks,
+      error: currentFiber.error
     };
     nextUnitOfWork = wipRoot;
     deletions = [];

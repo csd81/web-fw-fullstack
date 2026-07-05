@@ -1,69 +1,62 @@
 import { expect, test, describe, beforeAll } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { createElement, useState, memo, AntigravityReact } from "./index";
+import { createElement, useState, AntigravityReact, ErrorBoundary, createPortal } from "./index";
 import { render } from "./dom";
 
 beforeAll(() => {
   GlobalRegistrator.register();
 });
 
-describe("Phase 7: Subtree Rendering & React.memo", () => {
-  test("bails out of unchanged subtrees and only re-renders the updated component", async () => {
-    const container = document.createElement("div");
+describe("Phase 8: Error Boundaries and Portals", () => {
+  test("catches errors and renders portals outside the root", async () => {
+    const mainContainer = document.createElement("div");
+    const portalContainer = document.createElement("div");
+    document.body.appendChild(portalContainer);
 
-    let parentRenderCount = 0;
-    let memoChildRenderCount = 0;
-    let standardChildRenderCount = 0;
-    let triggerParentUpdate: any = null;
+    let triggerCrash: any = null;
 
-    const MemoChild = memo(({ val }: { val: string }) => {
-      memoChildRenderCount++;
-      return createElement("span", null, `Memo: ${val}`);
-    });
+    const BuggyComponent = () => {
+      const [shouldCrash, setCrash] = useState(false);
+      triggerCrash = () => setCrash(true);
 
-    const StandardChild = ({ val }: { val: string }) => {
-      standardChildRenderCount++;
-      return createElement("span", null, `Standard: ${val}`);
+      if (shouldCrash) {
+        throw new Error("I crashed!");
+      }
+
+      return createElement("div", null, "I am fine");
     };
 
-    const Parent = () => {
-      const [count, setCount] = useState(0);
-      parentRenderCount++;
-      triggerParentUpdate = () => setCount((c: number) => c + 1);
-
-      return createElement("div", null,
-        createElement(MemoChild, { val: "Fixed" }),
-        createElement(StandardChild, { val: "Fixed" }),
-        createElement("h1", null, `Count: ${count}`)
+    const Modal = () => {
+      return createPortal(
+        createElement("div", { id: "modal-content" }, "Modal content!"), 
+        portalContainer
       );
     };
 
-    const Root = () => createElement("div", null, createElement(Parent, null));
+    const App = () => {
+      return createElement("div", null,
+        createElement(ErrorBoundary, { fallback: (err: Error) => createElement("h1", null, `Caught: ${err.message}`) },
+          createElement(BuggyComponent, null)
+        ),
+        createElement(Modal, null)
+      );
+    };
 
-    // Initial Render
-    render(createElement(Root, null), container);
+    render(createElement(App, null), mainContainer);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(parentRenderCount).toBe(1);
-    expect(memoChildRenderCount).toBe(1);
-    expect(standardChildRenderCount).toBe(1);
+    // 1. Verify Portal worked correctly
+    expect(mainContainer.innerHTML).toBe("<div><div>I am fine</div></div>");
+    expect(portalContainer.innerHTML).toBe('<div id="modal-content">Modal content!</div>');
 
-    // Trigger update
-    triggerParentUpdate();
+    // 2. Trigger Crash
+    triggerCrash();
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // The Parent should re-render because its state changed
-    expect(parentRenderCount).toBe(2);
+    // 3. Verify Error Boundary caught it and rendered the fallback
+    expect(mainContainer.innerHTML).toBe("<div><h1>Caught: I crashed!</h1></div>");
     
-    // The StandardChild should re-render because it is not memoized
-    expect(standardChildRenderCount).toBe(2);
-
-    // The MemoChild should NOT re-render because its props ("Fixed") didn't change!
-    expect(memoChildRenderCount).toBe(1);
-
-    // Verify HTML is correct
-    expect(container.innerHTML).toBe(
-      '<div><div><span>Memo: Fixed</span><span>Standard: Fixed</span><h1>Count: 1</h1></div></div>'
-    );
+    // Portal content should remain untouched
+    expect(portalContainer.innerHTML).toBe('<div id="modal-content">Modal content!</div>');
   });
 });

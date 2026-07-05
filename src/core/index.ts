@@ -2,6 +2,7 @@ import { VNode } from "../types";
 import { useState, useEffect, useReducer, useMemo, useCallback, useRef, createContext, useContext, Suspense, memo } from "./dom";
 
 export const Fragment = "FRAGMENT";
+export const ErrorBoundary = "ERROR_BOUNDARY";
 
 function createTextElement(text: string): VNode {
   return {
@@ -27,6 +28,16 @@ export function createElement(type: any, props: any, ...children: any[]): VNode 
   };
 }
 
+export function createPortal(child: any, container: HTMLElement): VNode {
+  return {
+    type: "PORTAL",
+    props: {
+      children: [child],
+      container
+    }
+  };
+}
+
 export const AntigravityReact = {
   createElement,
   useState,
@@ -39,7 +50,9 @@ export const AntigravityReact = {
   useContext,
   Suspense,
   Fragment,
-  memo
+  memo,
+  ErrorBoundary,
+  createPortal
 };
 
 export { useState, useEffect, useReducer, useMemo, useCallback, useRef, createContext, useContext, Suspense, memo };
