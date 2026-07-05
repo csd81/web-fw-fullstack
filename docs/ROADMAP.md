@@ -100,3 +100,29 @@ This roadmap synthesizes the core concepts from the various "Build Your Own Reac
 
 13. **Synthetic Events**
     - Create a centralized event delegation system instead of attaching individual event listeners to every DOM node.
+
+---
+
+## Phase 6: Advanced Hooks, Context & Suspense
+
+**Goal:** Implement remaining modern APIs (useReducer, useRef, Context, Suspense).
+
+## Phase 7: Subtree Rendering & Bailing Out
+
+**Goal:** Optimize updates by re-rendering subtrees and bailing out of unchanged components using `React.memo`.
+
+## Phase 8: Error Boundaries & Portals
+
+**Goal:** Catch rendering errors gracefully and render Virtual DOM nodes into separate physical containers.
+
+## Phase 9: SVG & Namespace Support
+
+**Goal:** Support `xmlns` attributes and SVG rendering using `createElementNS` and `setAttributeNS`.
+
+## Phase 10: Specialized Hooks
+
+**Goal:** Add specialized hooks for rendering priorities and synchronous paints (`useLayoutEffect`, `useTransition`, `useDeferredValue`).
+
+## Phase 11: Server-Side Rendering (SSR) & Hydration
+
+**Goal:** Generate HTML strings on the server and attach Fiber nodes to pre-existing DOM elements on the client without rebuilding them.
