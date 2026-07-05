@@ -1,7 +1,8 @@
 export type AntigravityTextElement = "TEXT_ELEMENT";
+export type AntigravityFragment = "FRAGMENT";
 
 export interface VNode {
-  type: string | Function; // 'div', 'span', or a Component function
+  type: string | Function;
   props: VNodeProps;
 }
 
@@ -12,8 +13,13 @@ export interface VNodeProps {
 }
 
 export interface Hook {
-  state: any;
-  queue: any[];
+  tag?: string;
+  state?: any;
+  queue?: any[];
+  effect?: () => (void | (() => void));
+  deps?: any[];
+  cleanup?: void | (() => void);
+  hasChangedDeps?: boolean;
 }
 
 export interface Fiber {

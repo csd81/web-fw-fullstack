@@ -1,5 +1,7 @@
 import { VNode } from "../types";
-import { useState } from "./dom";
+import { useState, useEffect } from "./dom";
+
+export const Fragment = "FRAGMENT";
 
 function createTextElement(text: string): VNode {
   return {
@@ -12,11 +14,14 @@ function createTextElement(text: string): VNode {
 }
 
 export function createElement(type: string | Function, props: any, ...children: any[]): VNode {
+  // Flatten children array in case of fragments or mapping returning arrays
+  const flatChildren = children.flat(Infinity);
+  
   return {
     type,
     props: {
       ...props,
-      children: children.map((child) =>
+      children: flatChildren.map((child) =>
         typeof child === "object" ? child : createTextElement(String(child))
       ),
     },
@@ -26,7 +31,8 @@ export function createElement(type: string | Function, props: any, ...children: 
 export const AntigravityReact = {
   createElement,
   useState,
+  useEffect,
+  Fragment
 };
 
-// Export to be available via import { useState } from "src/core"
-export { useState };
+export { useState, useEffect };

@@ -55,11 +55,43 @@ function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any) {
     });
 }
 
+function runCleanup(fiber: Fiber | null) {
+  if (!fiber) return;
+  if (fiber.hooks) {
+    fiber.hooks
+      .filter((h) => h.tag === "effect" && h.cleanup)
+      .forEach((h) => h.cleanup!());
+  }
+  runCleanup(fiber.child);
+  runCleanup(fiber.sibling);
+}
+
+function runEffects(fiber: Fiber | null) {
+  if (!fiber) return;
+  if (fiber.hooks) {
+    fiber.hooks
+      .filter((h) => h.tag === "effect" && h.hasChangedDeps)
+      .forEach((h) => {
+        if (h.cleanup) h.cleanup();
+        h.cleanup = h.effect!();
+      });
+  }
+  runEffects(fiber.child);
+  runEffects(fiber.sibling);
+}
+
 function commitRoot() {
   deletions.forEach(commitWork);
   if (wipRoot && wipRoot.child) {
     commitWork(wipRoot.child);
   }
+
+  // Phase 5: Run effect cleanups for deleted nodes, then run new effects
+  deletions.forEach(runCleanup);
+  if (wipRoot) {
+    runEffects(wipRoot);
+  }
+
   currentRoot = wipRoot;
   wipRoot = null;
 }
@@ -77,7 +109,6 @@ function commitWork(fiber: Fiber | null) {
     return;
   }
 
-  // Functional components don't have DOM nodes, traverse up
   let domParentFiber = fiber.parent;
   while (!domParentFiber!.dom) {
     domParentFiber = domParentFiber!.parent;
@@ -90,7 +121,7 @@ function commitWork(fiber: Fiber | null) {
     updateDom(fiber.dom, fiber.alternate!.props, fiber.props);
   } else if (fiber.effectTag === "DELETION") {
     commitDeletion(fiber, domParent);
-    return; // Don't traverse down for DELETION, commitDeletion handles it
+    return;
   }
 
   commitWork(fiber.child);
@@ -146,8 +177,12 @@ if (typeof requestIdleCallback !== "undefined") {
 
 function performUnitOfWork(fiber: Fiber): Fiber | null {
   const isFunctionComponent = fiber.type instanceof Function;
+  const isFragment = fiber.type === "FRAGMENT";
+
   if (isFunctionComponent) {
     updateFunctionComponent(fiber);
+  } else if (isFragment) {
+    updateFragmentComponent(fiber);
   } else {
     updateHostComponent(fiber);
   }
@@ -171,6 +206,10 @@ function updateFunctionComponent(fiber: Fiber) {
   wipFiber.hooks = [];
   const children = [(fiber.type as Function)(fiber.props)];
   reconcileChildren(fiber, children);
+}
+
+function updateFragmentComponent(fiber: Fiber) {
+  reconcileChildren(fiber, fiber.props.children);
 }
 
 function updateHostComponent(fiber: Fiber) {
@@ -244,6 +283,7 @@ export function useState<T>(initial: T): [T, (action: T | ((prev: T) => T)) => v
     wipFiber.alternate.hooks[hookIndex];
 
   const hook: Hook = {
+    tag: "state",
     state: oldHook ? oldHook.state : initial,
     queue: [],
   };
@@ -272,6 +312,28 @@ export function useState<T>(initial: T): [T, (action: T | ((prev: T) => T)) => v
   wipFiber!.hooks!.push(hook);
   hookIndex++;
   return [hook.state, setState];
+}
+
+export function useEffect(effect: () => (void | (() => void)), deps?: any[]) {
+  const oldHook =
+    wipFiber?.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex];
+
+  const hasChangedDeps = oldHook
+    ? !deps || deps.some((dep, i) => !Object.is(dep, oldHook.deps![i]))
+    : true;
+
+  const hook: Hook = {
+    tag: "effect",
+    effect,
+    deps,
+    cleanup: oldHook ? oldHook.cleanup : undefined,
+    hasChangedDeps,
+  };
+
+  wipFiber!.hooks!.push(hook);
+  hookIndex++;
 }
 
 export const AntigravityReactDOM = {
