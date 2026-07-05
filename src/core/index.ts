@@ -32,13 +32,25 @@ function createTextElement(text: string): VNode {
 export function createElement(type: any, props: any, ...children: any[]): VNode {
   const flatChildren = children.flat(Infinity);
   
+  const mergedChildren: VNode[] = [];
+  for (let i = 0; i < flatChildren.length; i++) {
+    const child = flatChildren[i];
+    if (typeof child === "object" && child !== null) {
+      mergedChildren.push(child);
+    } else {
+      let text = String(child);
+      while (i + 1 < flatChildren.length && (typeof flatChildren[i + 1] !== "object" || flatChildren[i + 1] === null)) {
+        text += String(flatChildren[++i]);
+      }
+      mergedChildren.push(createTextElement(text));
+    }
+  }
+
   return {
     type,
     props: {
       ...props,
-      children: flatChildren.map((child) =>
-        typeof child === "object" ? child : createTextElement(String(child))
-      ),
+      children: mergedChildren,
     },
   };
 }

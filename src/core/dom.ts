@@ -8,7 +8,11 @@ let deletions: Fiber[] = [];
 let wipFiber: Fiber | null = null;
 let hookIndex: number = 0;
 
+export let isHydrating = false;
+export let nextHydratableNode: ChildNode | null = null;
+
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+// ... (omitting full file replacement, let's use surgical chunks instead)
 const HTML_NAMESPACE = "http://www.w3.org/1999/xhtml";
 
 const isEvent = (key: string) => key.startsWith("on");
@@ -122,6 +126,7 @@ function runEffects(fiber: Fiber | null, isLayout: boolean) {
 }
 
 function commitRoot() {
+  isHydrating = false;
   deletions.forEach(commitWork);
   
   if (wipRoot) {
@@ -204,6 +209,8 @@ function commitWork(fiber: Fiber | null) {
     } else if (fiber.effectTag === "UPDATE" && fiber.dom != null) {
       updateDom(fiber.dom, fiber.alternate!.props, fiber.props, fiber);
       domParent.appendChild(fiber.dom);
+    } else if (fiber.effectTag === "HYDRATE" && fiber.dom != null) {
+      updateDom(fiber.dom, {}, fiber.props, fiber);
     } else if (fiber.effectTag === "DELETION") {
       commitDeletion(fiber, domParent);
       return;
@@ -324,8 +331,14 @@ function performUnitOfWork(fiber: Fiber): Fiber | null {
   let nextFiber: Fiber | null = fiber;
   while (nextFiber) {
     if (nextFiber === wipRoot) {
+      isHydrating = false;
       return null;
     }
+    
+    if (isHydrating && nextFiber.dom) {
+      nextHydratableNode = nextFiber.dom.nextSibling;
+    }
+
     if (nextFiber.sibling) {
       return nextFiber.sibling;
     }
@@ -474,7 +487,38 @@ function updateFragmentOrPortalComponent(fiber: Fiber) {
 
 function updateHostComponent(fiber: Fiber) {
   if (!fiber.dom) {
-    fiber.dom = createDom(fiber);
+    if (isHydrating) {
+      while (
+        nextHydratableNode && 
+        nextHydratableNode.nodeType === Node.TEXT_NODE && 
+        fiber.type !== "TEXT_ELEMENT" &&
+        nextHydratableNode.nodeValue?.trim() === ""
+      ) {
+        nextHydratableNode = nextHydratableNode.nextSibling;
+      }
+
+      let matched = false;
+      if (nextHydratableNode) {
+        const isText = fiber.type === "TEXT_ELEMENT" && nextHydratableNode.nodeType === Node.TEXT_NODE;
+        const isElement = typeof fiber.type === "string" && nextHydratableNode.nodeType === Node.ELEMENT_NODE && fiber.type.toLowerCase() === nextHydratableNode.nodeName.toLowerCase();
+        
+        if (isText || isElement) {
+          fiber.dom = nextHydratableNode as any;
+          fiber.effectTag = "HYDRATE";
+          matched = true;
+          nextHydratableNode = fiber.dom!.firstChild;
+        }
+      }
+
+      if (!matched) {
+        isHydrating = false;
+        fiber.dom = createDom(fiber);
+        fiber.effectTag = "PLACEMENT";
+      }
+    } else {
+      fiber.dom = createDom(fiber);
+      fiber.effectTag = "PLACEMENT";
+    }
   }
   reconcileChildren(fiber, fiber.props.children);
 }
@@ -746,10 +790,26 @@ export function useDeferredValue<T>(value: T): T {
 }
 
 export function hydrateRoot(element: VNode, container: Element | Text) {
-  if (container instanceof Element) {
-    container.innerHTML = "";
-  }
-  render(element, container);
+  setupEventDelegation(container);
+  
+  isHydrating = true;
+  nextHydratableNode = container.firstChild;
+
+  wipRoot = {
+    dom: container,
+    props: {
+      children: [element],
+    },
+    parent: null,
+    child: null,
+    sibling: null,
+    alternate: currentRoot,
+    effectTag: "HYDRATE",
+    type: "ROOT",
+    namespaceURI: HTML_NAMESPACE
+  };
+  deletions = [];
+  nextUnitOfWork = wipRoot;
 }
 
 export const AntigravityReactDOM = {

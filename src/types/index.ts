@@ -34,7 +34,7 @@ export interface Fiber {
   sibling: Fiber | null;
   
   alternate: Fiber | null;
-  effectTag: "PLACEMENT" | "UPDATE" | "DELETION" | "NONE";
+  effectTag: "PLACEMENT" | "UPDATE" | "DELETION" | "NONE" | "HYDRATE";
   hooks?: Hook[];
   bailsOut?: boolean;
   error?: any;
