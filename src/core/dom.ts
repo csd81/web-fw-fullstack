@@ -400,6 +400,7 @@ function updateFunctionComponent(fiber: Fiber) {
 
   try {
     let rawChildren = Component(fiber.props);
+    wipFiber = null;
     const children = (Array.isArray(rawChildren) ? rawChildren : [rawChildren])
       .flat(Infinity)
       .map(child => 
@@ -409,6 +410,7 @@ function updateFunctionComponent(fiber: Fiber) {
       );
     reconcileChildren(fiber, children as VNode[]);
   } catch (err) {
+    wipFiber = null;
     if (err instanceof Promise) {
       let suspenseFiber = fiber.parent;
       while (suspenseFiber && suspenseFiber.type !== Suspense) {
@@ -554,7 +556,12 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
   });
 }
 
+export let ssrReadContext: ((context: any) => any) | null = null;
+export function setSSRReadContext(fn: any) { ssrReadContext = fn; }
+
 export function useReducer<S, A>(reducer: (state: S, action: A) => S, initialState: S): [S, (action: A) => void] {
+  if (!wipFiber) return [initialState, () => {}];
+
   const oldHook =
     wipFiber?.alternate &&
     wipFiber.alternate.hooks &&
@@ -605,6 +612,7 @@ export function useState<T>(initial: T): [T, (action: T | ((prev: T) => T)) => v
 }
 
 export function useEffect(effect: () => (void | (() => void)), deps?: any[]) {
+  if (!wipFiber) return;
   const oldHook =
     wipFiber?.alternate &&
     wipFiber.alternate.hooks &&
@@ -628,6 +636,7 @@ export function useEffect(effect: () => (void | (() => void)), deps?: any[]) {
 
 // Phase 10: Synchronous Layout Effects
 export function useLayoutEffect(effect: () => (void | (() => void)), deps?: any[]) {
+  if (!wipFiber) return;
   const oldHook =
     wipFiber?.alternate &&
     wipFiber.alternate.hooks &&
@@ -650,6 +659,7 @@ export function useLayoutEffect(effect: () => (void | (() => void)), deps?: any[
 }
 
 export function useMemo<T>(factory: () => T, deps: any[]): T {
+  if (!wipFiber) return factory();
   const oldHook =
     wipFiber?.alternate &&
     wipFiber.alternate.hooks &&
@@ -690,6 +700,10 @@ export function createContext<T>(defaultValue: T) {
 }
 
 export function useContext<T>(context: any): T {
+  if (!wipFiber) {
+    if (ssrReadContext) return ssrReadContext(context);
+    return context.defaultValue;
+  }
   let fiber = wipFiber!.parent;
   while (fiber) {
     if (fiber.type === context.Provider) {
@@ -702,6 +716,7 @@ export function useContext<T>(context: any): T {
 
 // Phase 10: Scheduling hooks
 export function useTransition(): [boolean, (cb: () => void) => void] {
+  if (!wipFiber) return [false, (cb: () => void) => cb()];
   const [isPending, setPending] = useState(false);
 
   const startTransition = (cb: () => void) => {
@@ -718,6 +733,7 @@ export function useTransition(): [boolean, (cb: () => void) => void] {
 }
 
 export function useDeferredValue<T>(value: T): T {
+  if (!wipFiber) return value;
   const [deferredValue, setDeferredValue] = useState(value);
 
   useEffect(() => {
@@ -729,6 +745,14 @@ export function useDeferredValue<T>(value: T): T {
   return deferredValue;
 }
 
+export function hydrateRoot(element: VNode, container: Element | Text) {
+  if (container instanceof Element) {
+    container.innerHTML = "";
+  }
+  render(element, container);
+}
+
 export const AntigravityReactDOM = {
   render,
+  hydrateRoot
 };

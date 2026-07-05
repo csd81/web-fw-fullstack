@@ -10,11 +10,11 @@ import {
   createContext, 
   useContext, 
   Suspense, 
-  memo, 
-  createPortal,
+  memo,
   useTransition,
   useDeferredValue
 } from "./dom";
+import { render, hydrateRoot } from "./dom";
 
 export const Fragment = "FRAGMENT";
 export const ErrorBoundary = "ERROR_BOUNDARY";
@@ -71,6 +71,11 @@ export const AntigravityReact = {
   createPortal,
   useTransition,
   useDeferredValue
+};
+
+export const AntigravityReactDOM = {
+  render,
+  hydrateRoot
 };
 
 export { 
