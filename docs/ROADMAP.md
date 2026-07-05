@@ -127,3 +127,4 @@ This roadmap synthesizes the core concepts from the various "Build Your Own Reac
 
 **Goal:** Generate HTML strings on the server and attach Fiber nodes to pre-existing DOM elements on the client without rebuilding them.
 \n### Phase 12: True DOM Hydration\nReplace the soft fallback with an algorithm that perfectly reconciles the Virtual DOM against existing server-rendered HTML nodes, avoiding destructive client takeovers.
+\n### Phase 13: Advanced Component Capabilities\nImplement forwardRef, useImperativeHandle, and normalize the Synthetic Event system to support professional, reusable component libraries.
