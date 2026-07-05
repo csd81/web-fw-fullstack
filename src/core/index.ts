@@ -1,5 +1,5 @@
 import { VNode } from "../types";
-import { useState, useEffect } from "./dom";
+import { useState, useEffect, useReducer, useMemo, useCallback, useRef, createContext, useContext, Suspense } from "./dom";
 
 export const Fragment = "FRAGMENT";
 
@@ -14,7 +14,6 @@ function createTextElement(text: string): VNode {
 }
 
 export function createElement(type: string | Function, props: any, ...children: any[]): VNode {
-  // Flatten children array in case of fragments or mapping returning arrays
   const flatChildren = children.flat(Infinity);
   
   return {
@@ -32,7 +31,14 @@ export const AntigravityReact = {
   createElement,
   useState,
   useEffect,
+  useReducer,
+  useMemo,
+  useCallback,
+  useRef,
+  createContext,
+  useContext,
+  Suspense,
   Fragment
 };
 
-export { useState, useEffect };
+export { useState, useEffect, useReducer, useMemo, useCallback, useRef, createContext, useContext, Suspense };

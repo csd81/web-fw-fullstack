@@ -24,12 +24,10 @@ function createDom(fiber: Fiber): HTMLElement | Text {
 }
 
 function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any, fiber: Fiber) {
-  // Phase 5: Synthetic Events. Attach the fiber to the raw DOM node.
   if (dom instanceof HTMLElement || dom instanceof Text) {
     (dom as any).__fiber = fiber;
   }
 
-  // Remove old properties
   Object.keys(prevProps)
     .filter(isProperty)
     .filter(isGone(prevProps, nextProps))
@@ -37,16 +35,12 @@ function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any, fibe
       (dom as any)[name] = "";
     });
 
-  // Set new or changed properties
   Object.keys(nextProps)
     .filter(isProperty)
     .filter(isNew(prevProps, nextProps))
     .forEach((name) => {
       (dom as any)[name] = nextProps[name];
     });
-
-  // We no longer add/remove actual DOM event listeners here.
-  // We use Synthetic Event Delegation on the Root.
 }
 
 function runCleanup(fiber: Fiber | null) {
@@ -112,12 +106,15 @@ function commitWork(fiber: Fiber | null) {
     domParent.appendChild(fiber.dom);
   } else if (fiber.effectTag === "UPDATE" && fiber.dom != null) {
     updateDom(fiber.dom, fiber.alternate!.props, fiber.props, fiber);
-    // Enforce correct order by re-appending the reused DOM node.
-    // Since commitWork traverses in exact tree order, this sorts the children perfectly!
     domParent.appendChild(fiber.dom);
   } else if (fiber.effectTag === "DELETION") {
     commitDeletion(fiber, domParent);
     return;
+  }
+
+  // Phase 6: Handle refs
+  if (fiber.dom != null && fiber.props.ref) {
+    fiber.props.ref.current = fiber.dom;
   }
 
   commitWork(fiber.child);
@@ -133,7 +130,6 @@ function setupEventDelegation(container: HTMLElement | Text) {
     let target = e.target as HTMLElement | null;
     const eventType = `on${e.type.charAt(0).toUpperCase()}${e.type.slice(1)}`;
     
-    // Bubble up the tree looking for Fibers with matching event handlers
     while (target && target !== container) {
       const fiber = (target as any).__fiber as Fiber;
       if (fiber && fiber.props && fiber.props[eventType]) {
@@ -224,12 +220,57 @@ function performUnitOfWork(fiber: Fiber): Fiber | null {
   return null;
 }
 
+// Phase 6: Suspense logic
+export const Suspense = function Suspense(props: any) {
+  return props.children;
+};
+
 function updateFunctionComponent(fiber: Fiber) {
   wipFiber = fiber;
   hookIndex = 0;
   wipFiber.hooks = [];
-  const children = [(fiber.type as Function)(fiber.props)];
-  reconcileChildren(fiber, children);
+
+  try {
+    let rawChildren = (fiber.type as Function)(fiber.props);
+    const children = (Array.isArray(rawChildren) ? rawChildren : [rawChildren])
+      .flat(Infinity)
+      .map(child => 
+        typeof child === "object" 
+          ? child 
+          : { type: "TEXT_ELEMENT", props: { nodeValue: String(child), children: [] } }
+      );
+    reconcileChildren(fiber, children as VNode[]);
+  } catch (promise) {
+    if (promise instanceof Promise) {
+      let suspenseFiber = fiber.parent;
+      while (suspenseFiber && suspenseFiber.type !== Suspense) {
+        suspenseFiber = suspenseFiber.parent;
+      }
+
+      if (suspenseFiber) {
+        reconcileChildren(fiber, [suspenseFiber.props.fallback]);
+
+        promise.then(() => {
+          wipRoot = {
+            dom: currentRoot!.dom,
+            props: currentRoot!.props,
+            alternate: currentRoot,
+            parent: null,
+            child: null,
+            sibling: null,
+            effectTag: "UPDATE",
+            type: "ROOT",
+          };
+          nextUnitOfWork = wipRoot;
+          deletions = [];
+        });
+      } else {
+        throw promise;
+      }
+    } else {
+      throw promise;
+    }
+  }
 }
 
 function updateFragmentComponent(fiber: Fiber) {
@@ -243,13 +284,11 @@ function updateHostComponent(fiber: Fiber) {
   reconcileChildren(fiber, fiber.props.children);
 }
 
-// Phase 5: Keyed Reconciliation
 function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
   const oldFiberMap = new Map<string | number, Fiber>();
   let currentOldFiber = wipFiber.alternate?.child;
   let oldIndex = 0;
   
-  // 1. Collect all old children into a map keyed by their unique `key` prop, or fallback to index.
   while (currentOldFiber) {
     const key = currentOldFiber.props.key != null ? currentOldFiber.props.key : oldIndex;
     oldFiberMap.set(key, currentOldFiber);
@@ -259,10 +298,9 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
 
   let prevSibling: Fiber | null = null;
 
-  // 2. Iterate over the new elements and match them with old fibers
   for (let i = 0; i < elements.length; i++) {
     const element = elements[i];
-    if (!element) continue; // Skip null/undefined/booleans which shouldn't render
+    if (!element) continue;
 
     const key = element.props.key != null ? element.props.key : i;
     const oldFiber = oldFiberMap.get(key);
@@ -271,7 +309,6 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
     const sameType = oldFiber && element.type === oldFiber.type;
 
     if (sameType) {
-      // Keys and Types match! Reuse the DOM node.
       newFiber = {
         type: oldFiber!.type,
         props: element.props,
@@ -284,7 +321,6 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
       };
       oldFiberMap.delete(key);
     } else {
-      // Type mismatch or no old fiber found. Create new DOM node.
       newFiber = {
         type: element.type,
         props: element.props,
@@ -306,14 +342,14 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
     prevSibling = newFiber;
   }
 
-  // 3. Any remaining old fibers in the map are no longer present, mark for DELETION
   oldFiberMap.forEach((oldFiber) => {
     oldFiber.effectTag = "DELETION";
     deletions.push(oldFiber);
   });
 }
 
-export function useState<T>(initial: T): [T, (action: T | ((prev: T) => T)) => void] {
+// Phase 6: useReducer & useState
+export function useReducer<S, A>(reducer: (state: S, action: A) => S, initialState: S): [S, (action: A) => void] {
   const oldHook =
     wipFiber?.alternate &&
     wipFiber.alternate.hooks &&
@@ -321,17 +357,17 @@ export function useState<T>(initial: T): [T, (action: T | ((prev: T) => T)) => v
 
   const hook: Hook = {
     tag: "state",
-    state: oldHook ? oldHook.state : initial,
+    state: oldHook ? oldHook.state : initialState,
     queue: [],
   };
 
-  const actions = oldHook ? oldHook.queue : [];
+  const actions = oldHook ? oldHook.queue! : [];
   actions.forEach((action) => {
-    hook.state = typeof action === "function" ? action(hook.state) : action;
+    hook.state = reducer(hook.state, action);
   });
 
-  const setState = (action: any) => {
-    hook.queue.push(action);
+  const dispatch = (action: A) => {
+    hook.queue!.push(action);
     wipRoot = {
       dom: currentRoot!.dom,
       props: currentRoot!.props,
@@ -348,7 +384,13 @@ export function useState<T>(initial: T): [T, (action: T | ((prev: T) => T)) => v
 
   wipFiber!.hooks!.push(hook);
   hookIndex++;
-  return [hook.state, setState];
+  return [hook.state, dispatch];
+}
+
+export function useState<T>(initial: T): [T, (action: T | ((prev: T) => T)) => void] {
+  return useReducer((state: T, action: any) => {
+    return typeof action === "function" ? action(state) : action;
+  }, initial);
 }
 
 export function useEffect(effect: () => (void | (() => void)), deps?: any[]) {
@@ -371,6 +413,59 @@ export function useEffect(effect: () => (void | (() => void)), deps?: any[]) {
 
   wipFiber!.hooks!.push(hook);
   hookIndex++;
+}
+
+// Phase 6: useMemo, useCallback, useRef
+export function useMemo<T>(factory: () => T, deps: any[]): T {
+  const oldHook =
+    wipFiber?.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex];
+
+  const hasChangedDeps = oldHook
+    ? !deps || deps.some((dep, i) => !Object.is(dep, oldHook.deps![i]))
+    : true;
+
+  const hook: Hook = {
+    tag: "memo",
+    state: hasChangedDeps ? factory() : oldHook!.state,
+    deps,
+  };
+
+  wipFiber!.hooks!.push(hook);
+  hookIndex++;
+  return hook.state;
+}
+
+export function useCallback<T extends Function>(callback: T, deps: any[]): T {
+  return useMemo(() => callback, deps);
+}
+
+export function useRef<T>(initialValue: T): { current: T } {
+  return useMemo(() => ({ current: initialValue }), []);
+}
+
+// Phase 6: Context API
+export function createContext<T>(defaultValue: T) {
+  const context = {
+    Provider: function Provider(props: any) {
+      return props.children;
+    },
+    defaultValue,
+  };
+  context.Provider.context = context;
+  return context;
+}
+
+export function useContext<T>(context: any): T {
+  let fiber = wipFiber!.parent;
+  while (fiber) {
+    if (fiber.type === context.Provider) {
+      return fiber.props.value;
+    }
+    fiber = fiber.parent;
+  }
+  return context.defaultValue;
 }
 
 export const AntigravityReactDOM = {
