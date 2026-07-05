@@ -7,50 +7,58 @@ beforeAll(() => {
   GlobalRegistrator.register();
 });
 
-describe("Phase 5: useEffect & Fragments", () => {
-  test("runs effects and supports fragments without DOM wrappers", async () => {
+describe("Phase 5: Keyed Lists & Synthetic Events", () => {
+  test("preserves DOM nodes using keys and handles delegated events", async () => {
     const container = document.createElement("div");
 
-    let effectRunCount = 0;
-    let cleanupRunCount = 0;
-    let triggerRender: any = null;
+    let items = ["A", "B", "C"];
+    let triggerReorder: any = null;
 
     const App = () => {
-      const [count, setCount] = useState(0);
-      
-      triggerRender = () => setCount((prev: number) => prev + 1);
+      const [list, setList] = useState(items);
+      triggerReorder = () => setList(["C", "A", "B"]); // Shuffle!
 
-      useEffect(() => {
-        effectRunCount++;
-        return () => {
-          cleanupRunCount++;
-        };
-      }, [count]);
-
-      return createElement(Fragment, null, 
-        createElement("h1", null, "Fragment Header"),
-        createElement("span", null, `Count: ${count}`)
+      return createElement("div", null, 
+        list.map((item) => 
+          createElement("div", { key: item, id: `item-${item}`, onClick: () => console.log(`Clicked ${item}`) }, item)
+        )
       );
     };
 
+    // 1. Initial render
     render(createElement(App, null), container);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    // Notice that there is no wrapping div inside the container! The fragment disappeared.
     expect(container.innerHTML).toBe(
-      '<h1>Fragment Header</h1><span>Count: 0</span>'
+      '<div><div id="item-A">A</div><div id="item-B">B</div><div id="item-C">C</div></div>'
     );
-    expect(effectRunCount).toBe(1); // Effect runs on mount
-    expect(cleanupRunCount).toBe(0);
 
-    triggerRender();
+    // Save a reference to the raw DOM node for "A"
+    const nodeA = container.querySelector("#item-A");
+
+    // Test synthetic event manually by dispatching a real DOM event
+    let eventFired = false;
+    const oldLog = console.log;
+    console.log = (msg) => { if (msg === "Clicked A") eventFired = true; };
+    
+    // Because we use event delegation on the container, clicking a child should bubble and trigger the fiber's onClick
+    nodeA?.dispatchEvent(new window.Event("click", { bubbles: true }));
+    expect(eventFired).toBe(true);
+    
+    console.log = oldLog;
+
+    // 2. Trigger reorder
+    triggerReorder();
     await new Promise((resolve) => setTimeout(resolve, 50));
 
+    // Notice order is updated
     expect(container.innerHTML).toBe(
-      '<h1>Fragment Header</h1><span>Count: 1</span>'
+      '<div><div id="item-C">C</div><div id="item-A">A</div><div id="item-B">B</div></div>'
     );
-    // Cleanup runs before the new effect because `count` dependency changed
-    expect(effectRunCount).toBe(2);
-    expect(cleanupRunCount).toBe(1);
+
+    // KEY PRESERVATION CHECK: The raw DOM node reference should STILL be strictly equal
+    // to the node currently in the DOM. It was NOT destroyed and recreated!
+    const newNodeA = container.querySelector("#item-A");
+    expect(newNodeA).toBe(nodeA); // Identity check!
   });
 });

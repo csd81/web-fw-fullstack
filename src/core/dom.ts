@@ -19,19 +19,17 @@ function createDom(fiber: Fiber): HTMLElement | Text {
       ? document.createTextNode("")
       : document.createElement(fiber.type as string);
 
-  updateDom(dom, {}, fiber.props);
+  updateDom(dom, {}, fiber.props, fiber);
   return dom;
 }
 
-function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any) {
-  Object.keys(prevProps)
-    .filter(isEvent)
-    .filter((key) => !(key in nextProps) || isNew(prevProps, nextProps)(key))
-    .forEach((name) => {
-      const eventType = name.toLowerCase().substring(2);
-      dom.removeEventListener(eventType, prevProps[name]);
-    });
+function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any, fiber: Fiber) {
+  // Phase 5: Synthetic Events. Attach the fiber to the raw DOM node.
+  if (dom instanceof HTMLElement || dom instanceof Text) {
+    (dom as any).__fiber = fiber;
+  }
 
+  // Remove old properties
   Object.keys(prevProps)
     .filter(isProperty)
     .filter(isGone(prevProps, nextProps))
@@ -39,6 +37,7 @@ function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any) {
       (dom as any)[name] = "";
     });
 
+  // Set new or changed properties
   Object.keys(nextProps)
     .filter(isProperty)
     .filter(isNew(prevProps, nextProps))
@@ -46,13 +45,8 @@ function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any) {
       (dom as any)[name] = nextProps[name];
     });
 
-  Object.keys(nextProps)
-    .filter(isEvent)
-    .filter(isNew(prevProps, nextProps))
-    .forEach((name) => {
-      const eventType = name.toLowerCase().substring(2);
-      dom.addEventListener(eventType, nextProps[name]);
-    });
+  // We no longer add/remove actual DOM event listeners here.
+  // We use Synthetic Event Delegation on the Root.
 }
 
 function runCleanup(fiber: Fiber | null) {
@@ -86,7 +80,6 @@ function commitRoot() {
     commitWork(wipRoot.child);
   }
 
-  // Phase 5: Run effect cleanups for deleted nodes, then run new effects
   deletions.forEach(runCleanup);
   if (wipRoot) {
     runEffects(wipRoot);
@@ -118,7 +111,10 @@ function commitWork(fiber: Fiber | null) {
   if (fiber.effectTag === "PLACEMENT" && fiber.dom != null) {
     domParent.appendChild(fiber.dom);
   } else if (fiber.effectTag === "UPDATE" && fiber.dom != null) {
-    updateDom(fiber.dom, fiber.alternate!.props, fiber.props);
+    updateDom(fiber.dom, fiber.alternate!.props, fiber.props, fiber);
+    // Enforce correct order by re-appending the reused DOM node.
+    // Since commitWork traverses in exact tree order, this sorts the children perfectly!
+    domParent.appendChild(fiber.dom);
   } else if (fiber.effectTag === "DELETION") {
     commitDeletion(fiber, domParent);
     return;
@@ -128,7 +124,35 @@ function commitWork(fiber: Fiber | null) {
   commitWork(fiber.sibling);
 }
 
+const DELEGATED_EVENTS = ["click", "input", "change", "keydown", "keyup", "submit"];
+
+function setupEventDelegation(container: HTMLElement | Text) {
+  if ((container as any).__eventsBound) return;
+  
+  const delegate = (e: Event) => {
+    let target = e.target as HTMLElement | null;
+    const eventType = `on${e.type.charAt(0).toUpperCase()}${e.type.slice(1)}`;
+    
+    // Bubble up the tree looking for Fibers with matching event handlers
+    while (target && target !== container) {
+      const fiber = (target as any).__fiber as Fiber;
+      if (fiber && fiber.props && fiber.props[eventType]) {
+        fiber.props[eventType](e);
+      }
+      target = target.parentNode as HTMLElement | null;
+    }
+  };
+
+  DELEGATED_EVENTS.forEach(eventName => {
+    container.addEventListener(eventName, delegate);
+  });
+  
+  (container as any).__eventsBound = true;
+}
+
 export function render(element: VNode, container: HTMLElement | Text) {
+  setupEventDelegation(container);
+
   wipRoot = {
     dom: container,
     props: {
@@ -219,18 +243,35 @@ function updateHostComponent(fiber: Fiber) {
   reconcileChildren(fiber, fiber.props.children);
 }
 
+// Phase 5: Keyed Reconciliation
 function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
-  let index = 0;
-  let oldFiber = wipFiber.alternate && wipFiber.alternate.child;
+  const oldFiberMap = new Map<string | number, Fiber>();
+  let currentOldFiber = wipFiber.alternate?.child;
+  let oldIndex = 0;
+  
+  // 1. Collect all old children into a map keyed by their unique `key` prop, or fallback to index.
+  while (currentOldFiber) {
+    const key = currentOldFiber.props.key != null ? currentOldFiber.props.key : oldIndex;
+    oldFiberMap.set(key, currentOldFiber);
+    currentOldFiber = currentOldFiber.sibling;
+    oldIndex++;
+  }
+
   let prevSibling: Fiber | null = null;
 
-  while (index < elements.length || oldFiber != null) {
-    const element = elements[index];
+  // 2. Iterate over the new elements and match them with old fibers
+  for (let i = 0; i < elements.length; i++) {
+    const element = elements[i];
+    if (!element) continue; // Skip null/undefined/booleans which shouldn't render
+
+    const key = element.props.key != null ? element.props.key : i;
+    const oldFiber = oldFiberMap.get(key);
     let newFiber: Fiber | null = null;
 
-    const sameType = oldFiber && element && element.type === oldFiber.type;
+    const sameType = oldFiber && element.type === oldFiber.type;
 
     if (sameType) {
+      // Keys and Types match! Reuse the DOM node.
       newFiber = {
         type: oldFiber!.type,
         props: element.props,
@@ -241,8 +282,9 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
         alternate: oldFiber,
         effectTag: "UPDATE",
       };
-    }
-    if (element && !sameType) {
+      oldFiberMap.delete(key);
+    } else {
+      // Type mismatch or no old fiber found. Create new DOM node.
       newFiber = {
         type: element.type,
         props: element.props,
@@ -254,26 +296,21 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
         effectTag: "PLACEMENT",
       };
     }
-    if (oldFiber && !sameType) {
-      oldFiber.effectTag = "DELETION";
-      deletions.push(oldFiber);
-    }
 
-    if (oldFiber) {
-      oldFiber = oldFiber.sibling;
-    }
-
-    if (index === 0) {
+    if (i === 0) {
       wipFiber.child = newFiber;
-    } else if (element) {
-      prevSibling!.sibling = newFiber;
+    } else if (prevSibling) {
+      prevSibling.sibling = newFiber;
     }
 
-    if (newFiber) {
-      prevSibling = newFiber;
-    }
-    index++;
+    prevSibling = newFiber;
   }
+
+  // 3. Any remaining old fibers in the map are no longer present, mark for DELETION
+  oldFiberMap.forEach((oldFiber) => {
+    oldFiber.effectTag = "DELETION";
+    deletions.push(oldFiber);
+  });
 }
 
 export function useState<T>(initial: T): [T, (action: T | ((prev: T) => T)) => void] {
