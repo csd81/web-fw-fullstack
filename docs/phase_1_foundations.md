@@ -59,7 +59,7 @@ export interface VNodeProps {
 
 ## 3. Implementing `createElement` (`src/core/index.ts`)
 
-When Vite/TypeScript sees JSX, it translates it.
+When Bun/TypeScript sees JSX, it translates it.
 **JSX:** `<h1 title="foo">Hello</h1>`
 **Compiled:** `AntigravityReact.createElement("h1", { title: "foo" }, "Hello")`
 
@@ -135,4 +135,4 @@ export function render(element: VNode, container: HTMLElement | Text) {
 
 ## 5. Phase 1 Verification
 
-We will verify this phase by writing a complex nested layout in `src/index.tsx`, running the Vite server, and ensuring the DOM tree mirrors the JSX perfectly, including text nodes and attributes.
+We will verify this phase by writing a complex nested layout in `src/index.tsx`, running the Bun dev server (`bun --hot run index.html` or `bun build`), and ensuring the DOM tree mirrors the JSX perfectly, including text nodes and attributes.
