@@ -1,5 +1,20 @@
 import { VNode } from "../types";
-import { useState, useEffect, useReducer, useMemo, useCallback, useRef, createContext, useContext, Suspense, memo } from "./dom";
+import { 
+  useState, 
+  useEffect, 
+  useLayoutEffect, 
+  useReducer, 
+  useMemo, 
+  useCallback, 
+  useRef, 
+  createContext, 
+  useContext, 
+  Suspense, 
+  memo, 
+  createPortal,
+  useTransition,
+  useDeferredValue
+} from "./dom";
 
 export const Fragment = "FRAGMENT";
 export const ErrorBoundary = "ERROR_BOUNDARY";
@@ -42,6 +57,7 @@ export const AntigravityReact = {
   createElement,
   useState,
   useEffect,
+  useLayoutEffect,
   useReducer,
   useMemo,
   useCallback,
@@ -52,7 +68,23 @@ export const AntigravityReact = {
   Fragment,
   memo,
   ErrorBoundary,
-  createPortal
+  createPortal,
+  useTransition,
+  useDeferredValue
 };
 
-export { useState, useEffect, useReducer, useMemo, useCallback, useRef, createContext, useContext, Suspense, memo };
+export { 
+  useState, 
+  useEffect, 
+  useLayoutEffect, 
+  useReducer, 
+  useMemo, 
+  useCallback, 
+  useRef, 
+  createContext, 
+  useContext, 
+  Suspense, 
+  memo,
+  useTransition,
+  useDeferredValue
+};

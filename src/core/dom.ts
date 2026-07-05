@@ -43,7 +43,6 @@ function createDom(fiber: Fiber): Element | Text {
     return dom;
   }
 
-  // Phase 9: SVG Namespace Support
   const dom = fiber.namespaceURI === SVG_NAMESPACE
     ? document.createElementNS(SVG_NAMESPACE, fiber.type as string)
     : document.createElement(fiber.type as string);
@@ -79,7 +78,6 @@ function updateDom(dom: Element | Text, prevProps: any, nextProps: any, fiber: F
     .filter(isProperty)
     .filter(isNew(prevProps, nextProps))
     .forEach((name) => {
-      // Phase 9: Handle SVG attributes properly
       if (fiber.namespaceURI === SVG_NAMESPACE) {
         if (name === "className") {
           dom.setAttribute("class", nextProps[name]);
@@ -98,29 +96,29 @@ function updateDom(dom: Element | Text, prevProps: any, nextProps: any, fiber: F
     });
 }
 
-function runCleanup(fiber: Fiber | null) {
+function runCleanup(fiber: Fiber | null, isLayout: boolean) {
   if (!fiber) return;
   if (fiber.hooks) {
     fiber.hooks
-      .filter((h) => h.tag === "effect" && h.cleanup)
+      .filter((h) => h.tag === (isLayout ? "layoutEffect" : "effect") && h.cleanup)
       .forEach((h) => h.cleanup!());
   }
-  runCleanup(fiber.child);
-  runCleanup(fiber.sibling);
+  runCleanup(fiber.child, isLayout);
+  runCleanup(fiber.sibling, isLayout);
 }
 
-function runEffects(fiber: Fiber | null) {
+function runEffects(fiber: Fiber | null, isLayout: boolean) {
   if (!fiber) return;
   if (fiber.hooks) {
     fiber.hooks
-      .filter((h) => h.tag === "effect" && h.hasChangedDeps)
+      .filter((h) => h.tag === (isLayout ? "layoutEffect" : "effect") && h.hasChangedDeps)
       .forEach((h) => {
         if (h.cleanup) h.cleanup();
         h.cleanup = h.effect!();
       });
   }
-  runEffects(fiber.child);
-  runEffects(fiber.sibling);
+  runEffects(fiber.child, isLayout);
+  runEffects(fiber.sibling, isLayout);
 }
 
 function commitRoot() {
@@ -130,10 +128,21 @@ function commitRoot() {
     commitWork(wipRoot);
   }
 
-  deletions.forEach(runCleanup);
+  // Phase 10: Synchronous Layout Effects
+  deletions.forEach(f => runCleanup(f, true));
   if (wipRoot) {
-    runEffects(wipRoot);
+    runEffects(wipRoot, true);
   }
+
+  // Phase 10: Asynchronous standard Effects
+  const effectsRoot = wipRoot;
+  const currentDeletions = deletions;
+  setTimeout(() => {
+    currentDeletions.forEach(f => runCleanup(f, false));
+    if (effectsRoot) {
+      runEffects(effectsRoot, false);
+    }
+  }, 0);
 
   if (wipRoot && wipRoot.type === "ROOT") {
     currentRoot = wipRoot;
@@ -495,7 +504,6 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
     const oldFiber = oldFiberMap.get(key);
     let newFiber: Fiber | null = null;
 
-    // Phase 9: Propagate Namespace URI
     let namespaceURI = currentNamespaceURI;
     if (element.type === "svg") {
       namespaceURI = SVG_NAMESPACE;
@@ -618,6 +626,29 @@ export function useEffect(effect: () => (void | (() => void)), deps?: any[]) {
   hookIndex++;
 }
 
+// Phase 10: Synchronous Layout Effects
+export function useLayoutEffect(effect: () => (void | (() => void)), deps?: any[]) {
+  const oldHook =
+    wipFiber?.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex];
+
+  const hasChangedDeps = oldHook
+    ? !deps || deps.some((dep, i) => !Object.is(dep, oldHook.deps![i]))
+    : true;
+
+  const hook: Hook = {
+    tag: "layoutEffect",
+    effect,
+    deps,
+    cleanup: oldHook ? oldHook.cleanup : undefined,
+    hasChangedDeps,
+  };
+
+  wipFiber!.hooks!.push(hook);
+  hookIndex++;
+}
+
 export function useMemo<T>(factory: () => T, deps: any[]): T {
   const oldHook =
     wipFiber?.alternate &&
@@ -667,6 +698,35 @@ export function useContext<T>(context: any): T {
     fiber = fiber.parent;
   }
   return context.defaultValue;
+}
+
+// Phase 10: Scheduling hooks
+export function useTransition(): [boolean, (cb: () => void) => void] {
+  const [isPending, setPending] = useState(false);
+
+  const startTransition = (cb: () => void) => {
+    setPending(true);
+    // Defer the transition callback to allow the pending state to render first
+    setTimeout(() => {
+      cb();
+      // Defer resetting the pending state so it updates after the callback renders
+      setTimeout(() => setPending(false), 0);
+    }, 20);
+  };
+
+  return [isPending, startTransition];
+}
+
+export function useDeferredValue<T>(value: T): T {
+  const [deferredValue, setDeferredValue] = useState(value);
+
+  useEffect(() => {
+    // Schedule low priority update
+    const id = setTimeout(() => setDeferredValue(value), 0);
+    return () => clearTimeout(id);
+  }, [value]);
+
+  return deferredValue;
 }
 
 export const AntigravityReactDOM = {
