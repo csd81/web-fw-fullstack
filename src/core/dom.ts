@@ -1,9 +1,12 @@
-import { Fiber, VNode } from "../types";
+import { Fiber, Hook, VNode } from "../types";
 
 let nextUnitOfWork: Fiber | null = null;
 let wipRoot: Fiber | null = null;
 let currentRoot: Fiber | null = null;
 let deletions: Fiber[] = [];
+
+let wipFiber: Fiber | null = null;
+let hookIndex: number = 0;
 
 const isEvent = (key: string) => key.startsWith("on");
 const isProperty = (key: string) => key !== "children" && !isEvent(key);
@@ -17,12 +20,10 @@ function createDom(fiber: Fiber): HTMLElement | Text {
       : document.createElement(fiber.type as string);
 
   updateDom(dom, {}, fiber.props);
-
   return dom;
 }
 
 function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any) {
-  // Remove old or changed event listeners
   Object.keys(prevProps)
     .filter(isEvent)
     .filter((key) => !(key in nextProps) || isNew(prevProps, nextProps)(key))
@@ -31,7 +32,6 @@ function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any) {
       dom.removeEventListener(eventType, prevProps[name]);
     });
 
-  // Remove old properties
   Object.keys(prevProps)
     .filter(isProperty)
     .filter(isGone(prevProps, nextProps))
@@ -39,7 +39,6 @@ function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any) {
       (dom as any)[name] = "";
     });
 
-  // Set new or changed properties
   Object.keys(nextProps)
     .filter(isProperty)
     .filter(isNew(prevProps, nextProps))
@@ -47,7 +46,6 @@ function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any) {
       (dom as any)[name] = nextProps[name];
     });
 
-  // Add event listeners
   Object.keys(nextProps)
     .filter(isEvent)
     .filter(isNew(prevProps, nextProps))
@@ -66,19 +64,33 @@ function commitRoot() {
   wipRoot = null;
 }
 
+function commitDeletion(fiber: Fiber, domParent: HTMLElement | Text) {
+  if (fiber.dom) {
+    domParent.removeChild(fiber.dom);
+  } else if (fiber.child) {
+    commitDeletion(fiber.child, domParent);
+  }
+}
+
 function commitWork(fiber: Fiber | null) {
   if (!fiber) {
     return;
   }
 
-  const domParent = fiber.parent!.dom as HTMLElement;
+  // Functional components don't have DOM nodes, traverse up
+  let domParentFiber = fiber.parent;
+  while (!domParentFiber!.dom) {
+    domParentFiber = domParentFiber!.parent;
+  }
+  const domParent = domParentFiber!.dom as HTMLElement;
 
   if (fiber.effectTag === "PLACEMENT" && fiber.dom != null) {
     domParent.appendChild(fiber.dom);
   } else if (fiber.effectTag === "UPDATE" && fiber.dom != null) {
     updateDom(fiber.dom, fiber.alternate!.props, fiber.props);
-  } else if (fiber.effectTag === "DELETION" && fiber.dom != null) {
-    domParent.removeChild(fiber.dom);
+  } else if (fiber.effectTag === "DELETION") {
+    commitDeletion(fiber, domParent);
+    return; // Don't traverse down for DELETION, commitDeletion handles it
   }
 
   commitWork(fiber.child);
@@ -133,12 +145,12 @@ if (typeof requestIdleCallback !== "undefined") {
 }
 
 function performUnitOfWork(fiber: Fiber): Fiber | null {
-  if (!fiber.dom) {
-    fiber.dom = createDom(fiber);
+  const isFunctionComponent = fiber.type instanceof Function;
+  if (isFunctionComponent) {
+    updateFunctionComponent(fiber);
+  } else {
+    updateHostComponent(fiber);
   }
-
-  const elements = fiber.props.children;
-  reconcileChildren(fiber, elements);
 
   if (fiber.child) {
     return fiber.child;
@@ -151,6 +163,21 @@ function performUnitOfWork(fiber: Fiber): Fiber | null {
     nextFiber = nextFiber.parent;
   }
   return null;
+}
+
+function updateFunctionComponent(fiber: Fiber) {
+  wipFiber = fiber;
+  hookIndex = 0;
+  wipFiber.hooks = [];
+  const children = [(fiber.type as Function)(fiber.props)];
+  reconcileChildren(fiber, children);
+}
+
+function updateHostComponent(fiber: Fiber) {
+  if (!fiber.dom) {
+    fiber.dom = createDom(fiber);
+  }
+  reconcileChildren(fiber, fiber.props.children);
 }
 
 function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
@@ -167,7 +194,7 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
     if (sameType) {
       newFiber = {
         type: oldFiber!.type,
-        props: element!.props,
+        props: element.props,
         dom: oldFiber!.dom,
         parent: wipFiber,
         child: null,
@@ -208,6 +235,43 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
     }
     index++;
   }
+}
+
+export function useState<T>(initial: T): [T, (action: T | ((prev: T) => T)) => void] {
+  const oldHook =
+    wipFiber?.alternate &&
+    wipFiber.alternate.hooks &&
+    wipFiber.alternate.hooks[hookIndex];
+
+  const hook: Hook = {
+    state: oldHook ? oldHook.state : initial,
+    queue: [],
+  };
+
+  const actions = oldHook ? oldHook.queue : [];
+  actions.forEach((action) => {
+    hook.state = typeof action === "function" ? action(hook.state) : action;
+  });
+
+  const setState = (action: any) => {
+    hook.queue.push(action);
+    wipRoot = {
+      dom: currentRoot!.dom,
+      props: currentRoot!.props,
+      alternate: currentRoot,
+      parent: null,
+      child: null,
+      sibling: null,
+      effectTag: "UPDATE",
+      type: "ROOT",
+    };
+    nextUnitOfWork = wipRoot;
+    deletions = [];
+  };
+
+  wipFiber!.hooks!.push(hook);
+  hookIndex++;
+  return [hook.state, setState];
 }
 
 export const AntigravityReactDOM = {

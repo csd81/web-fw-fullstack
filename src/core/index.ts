@@ -1,4 +1,5 @@
 import { VNode } from "../types";
+import { useState } from "./dom";
 
 function createTextElement(text: string): VNode {
   return {
@@ -10,7 +11,7 @@ function createTextElement(text: string): VNode {
   };
 }
 
-export function createElement(type: string, props: any, ...children: any[]): VNode {
+export function createElement(type: string | Function, props: any, ...children: any[]): VNode {
   return {
     type,
     props: {
@@ -24,4 +25,8 @@ export function createElement(type: string, props: any, ...children: any[]): VNo
 
 export const AntigravityReact = {
   createElement,
+  useState,
 };
+
+// Export to be available via import { useState } from "src/core"
+export { useState };

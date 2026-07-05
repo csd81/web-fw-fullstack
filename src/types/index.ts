@@ -1,6 +1,5 @@
 export type AntigravityTextElement = "TEXT_ELEMENT";
 
-// The shape of our Virtual DOM Node
 export interface VNode {
   type: string | Function; // 'div', 'span', or a Component function
   props: VNodeProps;
@@ -8,11 +7,15 @@ export interface VNode {
 
 export interface VNodeProps {
   children: VNode[];
-  nodeValue?: string; // Only populated for TEXT_ELEMENT
-  [key: string]: any; // Allows arbitrary attributes like className, onClick
+  nodeValue?: string;
+  [key: string]: any;
 }
 
-// The shape of our Unit of Work
+export interface Hook {
+  state: any;
+  queue: any[];
+}
+
 export interface Fiber {
   type: string | Function;
   props: VNodeProps;
@@ -24,4 +27,5 @@ export interface Fiber {
   
   alternate: Fiber | null;
   effectTag: "PLACEMENT" | "UPDATE" | "DELETION";
+  hooks?: Hook[];
 }
