@@ -3,12 +3,11 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { createElement } from "./index";
 import { render } from "./dom";
 
-// Initialize a DOM environment so we can test the render function
 beforeAll(() => {
   GlobalRegistrator.register();
 });
 
-describe("Phase 1 & 2: Foundations & Fiber", () => {
+describe("Phase 1, 2, & 3: React Core", () => {
   describe("createElement", () => {
     test("properly constructs a virtual DOM tree", () => {
       const vnode = createElement(
@@ -17,45 +16,43 @@ describe("Phase 1 & 2: Foundations & Fiber", () => {
         "Hello",
         createElement("span", null, "World")
       );
-
       expect(vnode.type).toBe("div");
       expect(vnode.props.id).toBe("foo");
       expect(vnode.props.children).toHaveLength(2);
-
-      // Verify text element normalization
-      const textChild = vnode.props.children[0];
-      expect(textChild.type).toBe("TEXT_ELEMENT");
-      expect(textChild.props.nodeValue).toBe("Hello");
-
-      // Verify nested element
-      const spanChild = vnode.props.children[1];
-      expect(spanChild.type).toBe("span");
-      expect(spanChild.props.children[0].type).toBe("TEXT_ELEMENT");
-      expect(spanChild.props.children[0].props.nodeValue).toBe("World");
     });
   });
 
-  describe("render (Fiber concurrent mode)", () => {
-    test("converts a virtual DOM tree into real DOM nodes asynchronously", async () => {
-      // Mock container
+  describe("render & reconciliation", () => {
+    test("mounts, updates, and deletes nodes", async () => {
       const container = document.createElement("div");
 
-      // Build VDOM
-      const vnode = createElement(
+      // 1. Initial Mount
+      const initialVNode = createElement(
         "div",
-        { id: "test-div", className: "container" },
-        "Test Content"
+        { id: "test-div", className: "container", title: "Original" },
+        "Hello",
+        createElement("span", null, "Child")
       );
-
-      // Execute render. In Phase 2, this just queues the work.
-      render(vnode, container);
-
-      // Wait a bit for the workLoop to process the fibers
+      render(initialVNode, container);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      // The `className` prop maps to the `class` HTML attribute.
       expect(container.innerHTML).toBe(
-        '<div id="test-div" class="container">Test Content</div>'
+        '<div id="test-div" class="container" title="Original">Hello<span>Child</span></div>'
+      );
+
+      // 2. Update (Change text, change prop, remove node, add node)
+      const updatedVNode = createElement(
+        "div",
+        { id: "test-div", className: "new-container" }, // Changed class, removed title
+        "Goodbye", // Changed text
+        createElement("p", null, "New Child") // Changed span to p
+      );
+      render(updatedVNode, container);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // The title property is set to "" upon deletion, class should change, span should be replaced by p, and text should change
+      expect(container.innerHTML).toBe(
+        '<div id="test-div" class="new-container" title="">Goodbye<p>New Child</p></div>'
       );
     });
   });

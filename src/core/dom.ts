@@ -1,6 +1,14 @@
 import { Fiber, VNode } from "../types";
 
 let nextUnitOfWork: Fiber | null = null;
+let wipRoot: Fiber | null = null;
+let currentRoot: Fiber | null = null;
+let deletions: Fiber[] = [];
+
+const isEvent = (key: string) => key.startsWith("on");
+const isProperty = (key: string) => key !== "children" && !isEvent(key);
+const isNew = (prev: any, next: any) => (key: string) => prev[key] !== next[key];
+const isGone = (prev: any, next: any) => (key: string) => !(key in next);
 
 function createDom(fiber: Fiber): HTMLElement | Text {
   const dom =
@@ -8,18 +16,77 @@ function createDom(fiber: Fiber): HTMLElement | Text {
       ? document.createTextNode("")
       : document.createElement(fiber.type as string);
 
-  const isProperty = (key: string) => key !== "children";
-  Object.keys(fiber.props)
-    .filter(isProperty)
-    .forEach((name) => {
-      (dom as any)[name] = fiber.props[name];
-    });
+  updateDom(dom, {}, fiber.props);
 
   return dom;
 }
 
+function updateDom(dom: HTMLElement | Text, prevProps: any, nextProps: any) {
+  // Remove old or changed event listeners
+  Object.keys(prevProps)
+    .filter(isEvent)
+    .filter((key) => !(key in nextProps) || isNew(prevProps, nextProps)(key))
+    .forEach((name) => {
+      const eventType = name.toLowerCase().substring(2);
+      dom.removeEventListener(eventType, prevProps[name]);
+    });
+
+  // Remove old properties
+  Object.keys(prevProps)
+    .filter(isProperty)
+    .filter(isGone(prevProps, nextProps))
+    .forEach((name) => {
+      (dom as any)[name] = "";
+    });
+
+  // Set new or changed properties
+  Object.keys(nextProps)
+    .filter(isProperty)
+    .filter(isNew(prevProps, nextProps))
+    .forEach((name) => {
+      (dom as any)[name] = nextProps[name];
+    });
+
+  // Add event listeners
+  Object.keys(nextProps)
+    .filter(isEvent)
+    .filter(isNew(prevProps, nextProps))
+    .forEach((name) => {
+      const eventType = name.toLowerCase().substring(2);
+      dom.addEventListener(eventType, nextProps[name]);
+    });
+}
+
+function commitRoot() {
+  deletions.forEach(commitWork);
+  if (wipRoot && wipRoot.child) {
+    commitWork(wipRoot.child);
+  }
+  currentRoot = wipRoot;
+  wipRoot = null;
+}
+
+function commitWork(fiber: Fiber | null) {
+  if (!fiber) {
+    return;
+  }
+
+  const domParent = fiber.parent!.dom as HTMLElement;
+
+  if (fiber.effectTag === "PLACEMENT" && fiber.dom != null) {
+    domParent.appendChild(fiber.dom);
+  } else if (fiber.effectTag === "UPDATE" && fiber.dom != null) {
+    updateDom(fiber.dom, fiber.alternate!.props, fiber.props);
+  } else if (fiber.effectTag === "DELETION" && fiber.dom != null) {
+    domParent.removeChild(fiber.dom);
+  }
+
+  commitWork(fiber.child);
+  commitWork(fiber.sibling);
+}
+
 export function render(element: VNode, container: HTMLElement | Text) {
-  nextUnitOfWork = {
+  wipRoot = {
     dom: container,
     props: {
       children: [element],
@@ -27,10 +94,12 @@ export function render(element: VNode, container: HTMLElement | Text) {
     parent: null,
     child: null,
     sibling: null,
-    alternate: null,
+    alternate: currentRoot,
     effectTag: "PLACEMENT",
-    type: "ROOT", // A special type for the root
+    type: "ROOT",
   };
+  deletions = [];
+  nextUnitOfWork = wipRoot;
 }
 
 function workLoop(deadline: IdleDeadline) {
@@ -40,8 +109,10 @@ function workLoop(deadline: IdleDeadline) {
     shouldYield = deadline.timeRemaining() < 1;
   }
 
-  // If requestIdleCallback is available (browser), use it.
-  // Otherwise, use setTimeout (for Node/Bun test environments).
+  if (!nextUnitOfWork && wipRoot) {
+    commitRoot();
+  }
+
   if (typeof requestIdleCallback !== "undefined") {
     requestIdleCallback(workLoop);
   } else {
@@ -52,7 +123,6 @@ function workLoop(deadline: IdleDeadline) {
   }
 }
 
-// Start the continuous loop
 if (typeof requestIdleCallback !== "undefined") {
   requestIdleCallback(workLoop);
 } else {
@@ -63,49 +133,13 @@ if (typeof requestIdleCallback !== "undefined") {
 }
 
 function performUnitOfWork(fiber: Fiber): Fiber | null {
-  // 1. Create the DOM node if it doesn't exist
   if (!fiber.dom) {
     fiber.dom = createDom(fiber);
   }
 
-  // Warning: In Phase 2, we incrementally append to the DOM.
-  // This causes incomplete UI updates. We will fix this in Phase 3.
-  if (fiber.parent && fiber.dom) {
-    fiber.parent.dom?.appendChild(fiber.dom);
-  }
-
-  // 2. Create fibers for the children
   const elements = fiber.props.children;
-  let index = 0;
-  let prevSibling: Fiber | null = null;
+  reconcileChildren(fiber, elements);
 
-  while (index < elements.length) {
-    const element = elements[index];
-
-    const newFiber: Fiber = {
-      type: element.type,
-      props: element.props,
-      dom: null,
-      parent: fiber,
-      child: null,
-      sibling: null,
-      alternate: null,
-      effectTag: "PLACEMENT",
-    };
-
-    if (index === 0) {
-      // The first child attaches as `.child`
-      fiber.child = newFiber;
-    } else if (prevSibling) {
-      // Subsequent children attach as `.sibling` to the previous child
-      prevSibling.sibling = newFiber;
-    }
-
-    prevSibling = newFiber;
-    index++;
-  }
-
-  // 3. Select next unit of work: Child -> Sibling -> Uncle
   if (fiber.child) {
     return fiber.child;
   }
@@ -117,6 +151,63 @@ function performUnitOfWork(fiber: Fiber): Fiber | null {
     nextFiber = nextFiber.parent;
   }
   return null;
+}
+
+function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
+  let index = 0;
+  let oldFiber = wipFiber.alternate && wipFiber.alternate.child;
+  let prevSibling: Fiber | null = null;
+
+  while (index < elements.length || oldFiber != null) {
+    const element = elements[index];
+    let newFiber: Fiber | null = null;
+
+    const sameType = oldFiber && element && element.type === oldFiber.type;
+
+    if (sameType) {
+      newFiber = {
+        type: oldFiber!.type,
+        props: element!.props,
+        dom: oldFiber!.dom,
+        parent: wipFiber,
+        child: null,
+        sibling: null,
+        alternate: oldFiber,
+        effectTag: "UPDATE",
+      };
+    }
+    if (element && !sameType) {
+      newFiber = {
+        type: element.type,
+        props: element.props,
+        dom: null,
+        parent: wipFiber,
+        child: null,
+        sibling: null,
+        alternate: null,
+        effectTag: "PLACEMENT",
+      };
+    }
+    if (oldFiber && !sameType) {
+      oldFiber.effectTag = "DELETION";
+      deletions.push(oldFiber);
+    }
+
+    if (oldFiber) {
+      oldFiber = oldFiber.sibling;
+    }
+
+    if (index === 0) {
+      wipFiber.child = newFiber;
+    } else if (element) {
+      prevSibling!.sibling = newFiber;
+    }
+
+    if (newFiber) {
+      prevSibling = newFiber;
+    }
+    index++;
+  }
 }
 
 export const AntigravityReactDOM = {
