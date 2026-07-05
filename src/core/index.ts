@@ -12,7 +12,9 @@ import {
   Suspense, 
   memo,
   useTransition,
-  useDeferredValue
+  useDeferredValue,
+  forwardRef,
+  useImperativeHandle
 } from "./dom";
 import { render, hydrateRoot } from "./dom";
 
@@ -84,7 +86,9 @@ export const AntigravityReact = {
   ErrorBoundary,
   createPortal,
   useTransition,
-  useDeferredValue
+  useDeferredValue,
+  forwardRef,
+  useImperativeHandle
 };
 
 export const AntigravityReactDOM = {
@@ -105,5 +109,7 @@ export {
   Suspense, 
   memo,
   useTransition,
-  useDeferredValue
+  useDeferredValue,
+  forwardRef,
+  useImperativeHandle
 };

@@ -1,6 +1,6 @@
 import { expect, test, describe, beforeAll } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
-import { createElement, useState, useLayoutEffect, useEffect, useTransition, useDeferredValue, AntigravityReact } from "./index";
+import { createElement, useState, useLayoutEffect, useEffect, useTransition, useDeferredValue, forwardRef, useImperativeHandle, useRef, AntigravityReact } from "./index";
 import { render } from "./dom";
 
 beforeAll(() => {
@@ -103,5 +103,42 @@ describe("Phase 10: Specialized Hooks", () => {
     // 2. Eventually, the transition callback runs, updating count, and then pending resets to false
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(container.innerHTML).toBe("<div>Count: 1, Pending: false</div>");
+  });
+});
+
+describe("Phase 13: Advanced Component Capabilities", () => {
+  test("forwardRef and useImperativeHandle work together", async () => {
+    const FancyInput = forwardRef(({ ref: _ref, ...props }: any, ref: any) => {
+      const inputRef = useRef<HTMLInputElement | null>(null);
+      useImperativeHandle(ref, () => ({
+        focus: () => {
+          if (inputRef.current) inputRef.current.focus();
+        },
+        customValue: "Hello Phase 13"
+      }));
+      return createElement("input", { ref: inputRef, ...props });
+    });
+
+    let exposedRef: any = null;
+    const App = () => {
+      const ref = useRef<any>(null);
+      useEffect(() => {
+        exposedRef = ref.current;
+      }, []);
+      return createElement(FancyInput, { ref });
+    };
+
+    const container = document.createElement("div");
+    render(createElement(App, null), container);
+    
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(exposedRef).not.toBeNull();
+    console.log("EXPOSED REF IS:", exposedRef);
+    expect(exposedRef.customValue).toBe("Hello Phase 13");
+    expect(typeof exposedRef.focus).toBe("function");
+    
+    // Ensure the underlying DOM was created
+    expect(container.innerHTML).toBe("<input>");
   });
 });

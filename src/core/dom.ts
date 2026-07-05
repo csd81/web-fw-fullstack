@@ -257,12 +257,36 @@ function setupEventDelegation(container: Element | Text) {
   
   const delegate = (e: Event) => {
     let target = e.target as HTMLElement | null;
-    const eventType = `on${e.type.charAt(0).toUpperCase()}${e.type.slice(1)}`;
+    let eventType = `on${e.type.charAt(0).toUpperCase()}${e.type.slice(1)}`;
+    if (e.type === "input") {
+      eventType = "onChange";
+    }
     
+    let isPropagationStopped = false;
+    const syntheticEvent = new Proxy(e, {
+      get(targetObj, prop) {
+        if (prop === "nativeEvent") return e;
+        if (prop === "currentTarget") return target;
+        if (prop === "stopPropagation") return () => {
+          isPropagationStopped = true;
+          e.stopPropagation();
+        };
+        const value = (targetObj as any)[prop];
+        return typeof value === "function" ? value.bind(targetObj) : value;
+      }
+    });
+
     while (target && target !== container) {
       const fiber = (target as any).__fiber as Fiber;
-      if (fiber && fiber.props && fiber.props[eventType]) {
-        fiber.props[eventType](e);
+      if (fiber && fiber.props) {
+        if (e.type === "input" && fiber.props["onChange"]) {
+          fiber.props["onChange"](syntheticEvent);
+        } else if (fiber.props[eventType]) {
+          fiber.props[eventType](syntheticEvent);
+        }
+        if (isPropagationStopped) {
+          break;
+        }
       }
       target = target.parentNode as HTMLElement | null;
     }
@@ -326,7 +350,7 @@ if (typeof requestIdleCallback !== "undefined") {
 }
 
 function performUnitOfWork(fiber: Fiber): Fiber | null {
-  const isFunctionComponent = fiber.type instanceof Function || (typeof fiber.type === "object" && (fiber.type as any).isMemo);
+  const isFunctionComponent = fiber.type instanceof Function || (typeof fiber.type === "object" && fiber.type !== null && ((fiber.type as any).isMemo || (fiber.type as any).isForwardRef));
   const isFragment = fiber.type === "FRAGMENT";
   const isPortal = fiber.type === "PORTAL";
   const isErrorBoundary = fiber.type === "ERROR_BOUNDARY";
@@ -415,7 +439,10 @@ function updateFunctionComponent(fiber: Fiber) {
   wipFiber.hooks = [];
 
   const isMemo = typeof fiber.type === "object" && (fiber.type as any).isMemo;
-  const Component = isMemo ? (fiber.type as any).Component : fiber.type;
+  const ComponentObj = isMemo ? (fiber.type as any).Component : fiber.type;
+  
+  const isForwardRef = typeof ComponentObj === "object" && ComponentObj.isForwardRef;
+  const Component = isForwardRef ? ComponentObj.render : ComponentObj;
 
   let shouldUpdate = true;
   if (isMemo && fiber.alternate) {
@@ -432,7 +459,7 @@ function updateFunctionComponent(fiber: Fiber) {
   }
 
   try {
-    let rawChildren = Component(fiber.props);
+    let rawChildren = isForwardRef ? Component(fiber.props, fiber.props.ref) : Component(fiber.props);
     wipFiber = null;
     const children = (Array.isArray(rawChildren) ? rawChildren : [rawChildren])
       .flat(Infinity)
@@ -830,6 +857,31 @@ export function hydrateRoot(element: VNode, container: Element | Text) {
   };
   deletions = [];
   nextUnitOfWork = wipRoot;
+}
+
+export function forwardRef<T, P = {}>(render: (props: P, ref: any) => any) {
+  return {
+    isForwardRef: true,
+    render,
+  };
+}
+
+export function useImperativeHandle<T, R extends T>(
+  ref: { current: T | null } | ((inst: T | null) => void) | null | undefined,
+  createHandle: () => R,
+  deps?: any[]
+) {
+  useLayoutEffect(() => {
+    if (typeof ref === "function") {
+      ref(createHandle());
+      return () => ref(null);
+    } else if (ref) {
+      ref.current = createHandle();
+      return () => {
+        ref.current = null as any;
+      };
+    }
+  }, deps);
 }
 
 export const AntigravityReactDOM = {
