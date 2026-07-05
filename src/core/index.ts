@@ -1,5 +1,5 @@
 import { VNode } from "../types";
-import { useState, useEffect, useReducer, useMemo, useCallback, useRef, createContext, useContext, Suspense } from "./dom";
+import { useState, useEffect, useReducer, useMemo, useCallback, useRef, createContext, useContext, Suspense, memo } from "./dom";
 
 export const Fragment = "FRAGMENT";
 
@@ -13,7 +13,7 @@ function createTextElement(text: string): VNode {
   };
 }
 
-export function createElement(type: string | Function, props: any, ...children: any[]): VNode {
+export function createElement(type: any, props: any, ...children: any[]): VNode {
   const flatChildren = children.flat(Infinity);
   
   return {
@@ -38,7 +38,8 @@ export const AntigravityReact = {
   createContext,
   useContext,
   Suspense,
-  Fragment
+  Fragment,
+  memo
 };
 
-export { useState, useEffect, useReducer, useMemo, useCallback, useRef, createContext, useContext, Suspense };
+export { useState, useEffect, useReducer, useMemo, useCallback, useRef, createContext, useContext, Suspense, memo };

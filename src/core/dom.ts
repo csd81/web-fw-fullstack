@@ -13,6 +13,26 @@ const isProperty = (key: string) => key !== "children" && !isEvent(key);
 const isNew = (prev: any, next: any) => (key: string) => prev[key] !== next[key];
 const isGone = (prev: any, next: any) => (key: string) => !(key in next);
 
+function shallowEqual(prev: any, next: any) {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  const prevKeys = Object.keys(prev).filter(k => k !== "children");
+  const nextKeys = Object.keys(next).filter(k => k !== "children");
+  if (prevKeys.length !== nextKeys.length) return false;
+  for (let key of prevKeys) {
+    if (prev[key] !== next[key]) return false;
+  }
+  return true;
+}
+
+export function memo(Component: Function, areEqual?: (prev: any, next: any) => boolean) {
+  return {
+    isMemo: true,
+    Component,
+    areEqual
+  };
+}
+
 function createDom(fiber: Fiber): HTMLElement | Text {
   const dom =
     fiber.type === "TEXT_ELEMENT"
@@ -70,8 +90,9 @@ function runEffects(fiber: Fiber | null) {
 
 function commitRoot() {
   deletions.forEach(commitWork);
-  if (wipRoot && wipRoot.child) {
-    commitWork(wipRoot.child);
+  
+  if (wipRoot) {
+    commitWork(wipRoot);
   }
 
   deletions.forEach(runCleanup);
@@ -79,7 +100,24 @@ function commitRoot() {
     runEffects(wipRoot);
   }
 
-  currentRoot = wipRoot;
+  if (wipRoot && wipRoot.type === "ROOT") {
+    currentRoot = wipRoot;
+  } else if (wipRoot) {
+    // Subtree render: connect the new subtree to the main tree
+    if (wipRoot.parent) {
+      if (wipRoot.parent.child === wipRoot.alternate) {
+        wipRoot.parent.child = wipRoot;
+      } else {
+        let sibling = wipRoot.parent.child;
+        while (sibling && sibling.sibling !== wipRoot.alternate) {
+          sibling = sibling.sibling;
+        }
+        if (sibling) {
+          sibling.sibling = wipRoot;
+        }
+      }
+    }
+  }
   wipRoot = null;
 }
 
@@ -97,28 +135,35 @@ function commitWork(fiber: Fiber | null) {
   }
 
   let domParentFiber = fiber.parent;
-  while (!domParentFiber!.dom) {
-    domParentFiber = domParentFiber!.parent;
+  while (domParentFiber && !domParentFiber.dom) {
+    domParentFiber = domParentFiber.parent;
   }
-  const domParent = domParentFiber!.dom as HTMLElement;
+  const domParent = domParentFiber ? domParentFiber.dom as HTMLElement : null;
 
-  if (fiber.effectTag === "PLACEMENT" && fiber.dom != null) {
-    domParent.appendChild(fiber.dom);
-  } else if (fiber.effectTag === "UPDATE" && fiber.dom != null) {
-    updateDom(fiber.dom, fiber.alternate!.props, fiber.props, fiber);
-    domParent.appendChild(fiber.dom);
-  } else if (fiber.effectTag === "DELETION") {
-    commitDeletion(fiber, domParent);
-    return;
+  if (domParent) {
+    if (fiber.effectTag === "PLACEMENT" && fiber.dom != null) {
+      domParent.appendChild(fiber.dom);
+    } else if (fiber.effectTag === "UPDATE" && fiber.dom != null) {
+      updateDom(fiber.dom, fiber.alternate!.props, fiber.props, fiber);
+      domParent.appendChild(fiber.dom);
+    } else if (fiber.effectTag === "DELETION") {
+      commitDeletion(fiber, domParent);
+      return;
+    }
   }
 
-  // Phase 6: Handle refs
   if (fiber.dom != null && fiber.props.ref) {
     fiber.props.ref.current = fiber.dom;
   }
 
-  commitWork(fiber.child);
-  commitWork(fiber.sibling);
+  if (!fiber.bailsOut) {
+    commitWork(fiber.child);
+  }
+  
+  // Only commit sibling if this is not the root of the update
+  if (fiber !== wipRoot) {
+    commitWork(fiber.sibling);
+  }
 }
 
 const DELEGATED_EVENTS = ["click", "input", "change", "keydown", "keyup", "submit"];
@@ -196,7 +241,7 @@ if (typeof requestIdleCallback !== "undefined") {
 }
 
 function performUnitOfWork(fiber: Fiber): Fiber | null {
-  const isFunctionComponent = fiber.type instanceof Function;
+  const isFunctionComponent = fiber.type instanceof Function || (typeof fiber.type === "object" && (fiber.type as any).isMemo);
   const isFragment = fiber.type === "FRAGMENT";
 
   if (isFunctionComponent) {
@@ -207,11 +252,14 @@ function performUnitOfWork(fiber: Fiber): Fiber | null {
     updateHostComponent(fiber);
   }
 
-  if (fiber.child) {
+  if (fiber.child && !fiber.bailsOut) {
     return fiber.child;
   }
   let nextFiber: Fiber | null = fiber;
   while (nextFiber) {
+    if (nextFiber === wipRoot) {
+      return null;
+    }
     if (nextFiber.sibling) {
       return nextFiber.sibling;
     }
@@ -220,18 +268,60 @@ function performUnitOfWork(fiber: Fiber): Fiber | null {
   return null;
 }
 
-// Phase 6: Suspense logic
 export const Suspense = function Suspense(props: any) {
   return props.children;
 };
+
+function cloneChildren(fiber: Fiber) {
+  if (!fiber.alternate) return;
+  let oldChild = fiber.alternate.child;
+  let prevSibling: Fiber | null = null;
+  while (oldChild) {
+    const newChild: Fiber = {
+      type: oldChild.type,
+      props: oldChild.props,
+      dom: oldChild.dom,
+      parent: fiber,
+      child: oldChild.child, 
+      sibling: null,
+      alternate: oldChild,
+      effectTag: "NONE",
+      hooks: oldChild.hooks,
+    };
+    if (!prevSibling) {
+      fiber.child = newChild;
+    } else {
+      prevSibling.sibling = newChild;
+    }
+    prevSibling = newChild;
+    oldChild = oldChild.sibling;
+  }
+}
 
 function updateFunctionComponent(fiber: Fiber) {
   wipFiber = fiber;
   hookIndex = 0;
   wipFiber.hooks = [];
 
+  const isMemo = typeof fiber.type === "object" && (fiber.type as any).isMemo;
+  const Component = isMemo ? (fiber.type as any).Component : fiber.type;
+
+  let shouldUpdate = true;
+  if (isMemo && fiber.alternate) {
+    const areEqual = (fiber.type as any).areEqual || shallowEqual;
+    if (areEqual(fiber.alternate.props, fiber.props)) {
+      shouldUpdate = false;
+    }
+  }
+
+  if (!shouldUpdate) {
+    cloneChildren(fiber);
+    fiber.bailsOut = true;
+    return;
+  }
+
   try {
-    let rawChildren = (fiber.type as Function)(fiber.props);
+    let rawChildren = Component(fiber.props);
     const children = (Array.isArray(rawChildren) ? rawChildren : [rawChildren])
       .flat(Infinity)
       .map(child => 
@@ -249,7 +339,6 @@ function updateFunctionComponent(fiber: Fiber) {
 
       if (suspenseFiber) {
         reconcileChildren(fiber, [suspenseFiber.props.fallback]);
-
         promise.then(() => {
           wipRoot = {
             dom: currentRoot!.dom,
@@ -348,7 +437,6 @@ function reconcileChildren(wipFiber: Fiber, elements: VNode[]) {
   });
 }
 
-// Phase 6: useReducer & useState
 export function useReducer<S, A>(reducer: (state: S, action: A) => S, initialState: S): [S, (action: A) => void] {
   const oldHook =
     wipFiber?.alternate &&
@@ -366,17 +454,22 @@ export function useReducer<S, A>(reducer: (state: S, action: A) => S, initialSta
     hook.state = reducer(hook.state, action);
   });
 
+  const currentFiber = wipFiber!;
+
   const dispatch = (action: A) => {
     hook.queue!.push(action);
+    
+    // Phase 7: Subtree Rendering!
     wipRoot = {
-      dom: currentRoot!.dom,
-      props: currentRoot!.props,
-      alternate: currentRoot,
-      parent: null,
+      dom: currentFiber.dom,
+      props: currentFiber.props,
+      alternate: currentFiber,
+      parent: currentFiber.parent,
       child: null,
-      sibling: null,
+      sibling: currentFiber.sibling,
       effectTag: "UPDATE",
-      type: "ROOT",
+      type: currentFiber.type,
+      hooks: currentFiber.hooks,
     };
     nextUnitOfWork = wipRoot;
     deletions = [];
@@ -415,7 +508,6 @@ export function useEffect(effect: () => (void | (() => void)), deps?: any[]) {
   hookIndex++;
 }
 
-// Phase 6: useMemo, useCallback, useRef
 export function useMemo<T>(factory: () => T, deps: any[]): T {
   const oldHook =
     wipFiber?.alternate &&
@@ -445,7 +537,6 @@ export function useRef<T>(initialValue: T): { current: T } {
   return useMemo(() => ({ current: initialValue }), []);
 }
 
-// Phase 6: Context API
 export function createContext<T>(defaultValue: T) {
   const context = {
     Provider: function Provider(props: any) {

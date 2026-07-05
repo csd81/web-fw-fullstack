@@ -2,7 +2,7 @@ export type AntigravityTextElement = "TEXT_ELEMENT";
 export type AntigravityFragment = "FRAGMENT";
 
 export interface VNode {
-  type: string | Function;
+  type: string | Function | { isMemo: boolean; Component: Function; areEqual?: Function };
   props: VNodeProps;
 }
 
@@ -23,7 +23,7 @@ export interface Hook {
 }
 
 export interface Fiber {
-  type: string | Function;
+  type: string | Function | { isMemo: boolean; Component: Function; areEqual?: Function };
   props: VNodeProps;
   dom: HTMLElement | Text | null;
   
@@ -32,6 +32,7 @@ export interface Fiber {
   sibling: Fiber | null;
   
   alternate: Fiber | null;
-  effectTag: "PLACEMENT" | "UPDATE" | "DELETION";
+  effectTag: "PLACEMENT" | "UPDATE" | "DELETION" | "NONE";
   hooks?: Hook[];
+  bailsOut?: boolean;
 }
