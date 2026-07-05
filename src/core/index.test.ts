@@ -8,7 +8,7 @@ beforeAll(() => {
   GlobalRegistrator.register();
 });
 
-describe("Phase 1: Foundations", () => {
+describe("Phase 1 & 2: Foundations & Fiber", () => {
   describe("createElement", () => {
     test("properly constructs a virtual DOM tree", () => {
       const vnode = createElement(
@@ -35,8 +35,8 @@ describe("Phase 1: Foundations", () => {
     });
   });
 
-  describe("render", () => {
-    test("converts a virtual DOM tree into real DOM nodes", () => {
+  describe("render (Fiber concurrent mode)", () => {
+    test("converts a virtual DOM tree into real DOM nodes asynchronously", async () => {
       // Mock container
       const container = document.createElement("div");
 
@@ -47,11 +47,13 @@ describe("Phase 1: Foundations", () => {
         "Test Content"
       );
 
-      // Execute render
+      // Execute render. In Phase 2, this just queues the work.
       render(vnode, container);
 
+      // Wait a bit for the workLoop to process the fibers
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
       // The `className` prop maps to the `class` HTML attribute.
-      // Happy DOM serializes this perfectly!
       expect(container.innerHTML).toBe(
         '<div id="test-div" class="container">Test Content</div>'
       );

@@ -11,3 +11,17 @@ export interface VNodeProps {
   nodeValue?: string; // Only populated for TEXT_ELEMENT
   [key: string]: any; // Allows arbitrary attributes like className, onClick
 }
+
+// The shape of our Unit of Work
+export interface Fiber {
+  type: string | Function;
+  props: VNodeProps;
+  dom: HTMLElement | Text | null;
+  
+  parent: Fiber | null;
+  child: Fiber | null;
+  sibling: Fiber | null;
+  
+  alternate: Fiber | null;
+  effectTag: "PLACEMENT" | "UPDATE" | "DELETION";
+}
